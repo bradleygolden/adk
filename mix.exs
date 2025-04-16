@@ -10,7 +10,11 @@ defmodule Adk.MixProject do
       deps: deps(),
       description: "Agent Development Kit for Elixir - framework for building AI agents",
       package: package(),
-      docs: docs()
+      docs: docs(),
+      elixirc_paths: elixirc_paths(Mix.env()),
+      preferred_cli_env: [
+        "test.watch": :test
+      ]
     ]
   end
 
@@ -26,9 +30,12 @@ defmodule Adk.MixProject do
   defp deps do
     [
       {:ex_doc, "~> 0.29", only: :dev, runtime: false},
-      {:jason, "~> 1.4"},
       {:langchain, "~> 0.3.2", optional: true},
-      {:meck, "~> 0.9", only: :test}
+      {:bypass, "~> 2.1", only: :test},
+      # Added UUID dependency
+      {:uuid, "~> 1.1"},
+      # Added mix_test_watch for development and testing
+      {:mix_test_watch, "~> 1.2", only: [:dev, :test], runtime: false}
     ]
   end
 
@@ -46,4 +53,8 @@ defmodule Adk.MixProject do
       extras: ["README.md"]
     ]
   end
+
+  # Specifies which paths to compile per environment
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
 end

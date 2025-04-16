@@ -16,10 +16,37 @@ defmodule Adk do
 
   ## Parameters
     * `agent_type` - The type of agent to create (e.g., :sequential, :parallel, :loop, :llm)
-    * `config` - A map of configuration options for the agent
+    * `config` - A map of configuration options for the agent. Common options include:
+      * `:name` (atom or string) - A unique name for the agent.
+      * `:description` (string) - A description of the agent's capabilities (used by other agents).
+      * `:tools` (list) - A list of tool modules or functions the agent can use.
+      * `:instruction` (string) - Instructions guiding the agent's behavior.
+      * `:model` (string or atom) - The underlying LLM model identifier (for LLM agents).
+      * `:input_schema` (module) - Optional. An Elixir struct module defining the expected input structure. Input must be a JSON string conforming to this schema.
+      * `:output_schema` (module) - Optional. An Elixir struct module defining the desired output structure. The agent will attempt to generate a JSON string conforming to this schema. **Using this option disables tool usage for the agent.**
+      * `:output_key` (atom or string) - Optional. If set, the agent's final response content will be stored in the session state under this key.
+      * ... (other agent-type specific options)
 
   ## Examples
-      iex> Adk.create_agent(:sequential, %{name: "my_agent", tools: []})
+      iex> Adk.create_agent(:llm, %{name: "capital_agent", model: "gemini-flash", tools: [MyApp.Tools.GetCapital]})
+      {:ok, agent_pid}
+
+      iex> defmodule CapitalInput do
+      ...>   @enforce_keys [:country]
+      ...>   defstruct [:country]
+      ...> end
+      iex> defmodule CapitalOutput do
+      ...>   @enforce_keys [:capital]
+      ...>   defstruct [:capital]
+      ...> end
+      iex> Adk.create_agent(:llm, %{
+      ...>   name: "structured_capital_agent",
+      ...>   model: "gemini-flash",
+      ...>   instruction: "Given a country in JSON like `{"country": "France"}`, respond ONLY with JSON like `{"capital": "Paris"}`.",
+      ...>   input_schema: CapitalInput,
+      ...>   output_schema: CapitalOutput,
+      ...>   output_key: :capital_result
+      ...> })
       {:ok, agent_pid}
   """
   def create_agent(agent_type, config) do
@@ -92,7 +119,10 @@ defmodule Adk do
       {:ok, 5}
   """
   def execute_tool(tool_name, params) do
-    Adk.Tool.execute(tool_name, params)
+    # Create a minimal context map. If session/invocation info is needed here,
+    # this function signature would need to change.
+    context = %{session_id: "adk_facade_call", invocation_id: nil, tool_call_id: nil}
+    Adk.ToolRegistry.execute_tool(tool_name, params, context)
   end
 
   @doc """

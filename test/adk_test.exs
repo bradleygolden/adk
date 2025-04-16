@@ -18,8 +18,8 @@ defmodule AdkTest do
       }
     end
 
-    @impl true
-    def execute(%{"input" => input}) do
+    @impl Adk.Tool
+    def execute(%{"input" => input}, _context) do
       {:ok, "Processed: #{input}"}
     end
   end
@@ -71,6 +71,7 @@ defmodule AdkTest do
     assert tool_module == TestTool
 
     # Try to look up a non-existent tool
-    assert {:error, :tool_not_found} = Adk.ToolRegistry.lookup(:nonexistent_tool)
+    assert {:error, {:tool_not_found, :nonexistent_tool}} =
+             Adk.ToolRegistry.lookup(:nonexistent_tool)
   end
 end

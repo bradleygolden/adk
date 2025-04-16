@@ -6,7 +6,8 @@ defmodule Adk.Agent do
   @doc """
   Run the agent with the provided input.
   """
-  @callback run(agent :: pid(), input :: any()) :: {:ok, map()} | {:error, term()}
+  @callback run(agent :: pid(), input :: any()) ::
+              {:ok, map()} | {:error, {:run_failed, reason :: term()}}
 
   # We don't need this callback anymore as we use __initialize__ internally
 
@@ -17,10 +18,10 @@ defmodule Adk.Agent do
     GenServer.call(agent, {:run, input})
   end
 
-  def run(agent_ref, input) when is_atom(agent_ref) do
+  def run(agent_ref, input) when is_atom(agent_ref) or is_binary(agent_ref) do
     case Registry.lookup(Adk.AgentRegistry, agent_ref) do
       [{pid, _}] -> run(pid, input)
-      [] -> {:error, :agent_not_found}
+      [] -> {:error, {:agent_not_found, agent_ref}}
     end
   end
 
@@ -31,10 +32,10 @@ defmodule Adk.Agent do
     GenServer.call(agent, :get_state)
   end
 
-  def get_state(agent_ref) when is_atom(agent_ref) do
+  def get_state(agent_ref) when is_atom(agent_ref) or is_binary(agent_ref) do
     case Registry.lookup(Adk.AgentRegistry, agent_ref) do
       [{pid, _}] -> get_state(pid)
-      [] -> {:error, :agent_not_found}
+      [] -> {:error, {:agent_not_found, agent_ref}}
     end
   end
 
@@ -49,8 +50,8 @@ defmodule Adk.Agent do
       # Default implementation for Adk.Agent behaviour
       @impl Adk.Agent
       def run(agent, input), do: Adk.Agent.run(agent, input)
-      
-      # GenServer implementation 
+
+      # GenServer implementation
       @impl GenServer
       def init(config) do
         # Use internal __initialize__ to avoid conflicts
@@ -59,7 +60,7 @@ defmodule Adk.Agent do
           {:error, reason} -> {:stop, reason}
         end
       end
-      
+
       # Internal initialize function that can be overridden
       # without conflicting with GenServer.init
       defp __initialize__(config), do: {:ok, config}

@@ -11,8 +11,7 @@ defmodule Adk.Application do
       {Registry, keys: :unique, name: Adk.ToolRegistry.Registry},
       # Supervisor for managing agent processes
       Adk.AgentSupervisor,
-      # Tool registry service
-      Adk.ToolRegistry,
+      # Tool registry service (Now just a module, Registry started above)
       # In-memory memory service
       Adk.Memory.InMemory
     ]

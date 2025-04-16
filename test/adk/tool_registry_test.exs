@@ -13,8 +13,8 @@ defmodule Adk.ToolRegistryTest do
       }
     end
 
-    @impl true
-    def execute(_params), do: {:ok, :dummy_result}
+    @impl Adk.Tool
+    def execute(_params, _context), do: {:ok, :dummy_result}
   end
 
   setup do
@@ -35,13 +35,13 @@ defmodule Adk.ToolRegistryTest do
   test "unregisters a tool" do
     Adk.ToolRegistry.register(DummyTool)
     assert :ok = Adk.ToolRegistry.unregister(:dummy_tool)
-    assert {:error, :tool_not_found} = Adk.ToolRegistry.lookup(:dummy_tool)
+    assert {:error, {:tool_not_found, :dummy_tool}} = Adk.ToolRegistry.lookup(:dummy_tool)
   end
 
   test "returns error for invalid tool module" do
     defmodule InvalidTool do
     end
 
-    assert {:error, :invalid_tool_module} = Adk.ToolRegistry.register(InvalidTool)
+    assert {:error, {:invalid_tool_module, InvalidTool}} = Adk.ToolRegistry.register(InvalidTool)
   end
 end

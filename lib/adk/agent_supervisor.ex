@@ -32,11 +32,12 @@ defmodule Adk.AgentSupervisor do
     registry_name = Map.get(config, :name)
 
     # Define the child spec for the agent
-    child_spec = if registry_name do
-      {agent_module, {config, [name: {:via, Registry, {Adk.AgentRegistry, registry_name}}]}}
-    else
-      {agent_module, config}
-    end
+    child_spec =
+      if registry_name do
+        {agent_module, {config, [name: {:via, Registry, {Adk.AgentRegistry, registry_name}}]}}
+      else
+        {agent_module, config}
+      end
 
     # Start the agent under the supervisor
     DynamicSupervisor.start_child(__MODULE__, child_spec)
@@ -52,7 +53,8 @@ defmodule Adk.AgentSupervisor do
       :loop -> Adk.Agents.Loop
       :llm -> Adk.Agents.LLM
       :langchain -> Adk.Agents.Langchain
-      module when is_atom(module) -> module  # Allow custom agent modules
+      # Allow custom agent modules
+      module when is_atom(module) -> module
       _ -> raise ArgumentError, "Unknown agent type: #{inspect(agent_type)}"
     end
   end

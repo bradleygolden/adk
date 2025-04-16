@@ -5,228 +5,342 @@ defmodule Adk.Agents.LLM do
   This agent uses an LLM to decide which tools to call and how to respond to input.
   """
   use GenServer
+  alias Adk.Memory
+  require UUID
+  require Logger
   @behaviour Adk.Agent
-  
+
+  alias Adk.LLM
+
+  # --- Structs ---
+
+  defmodule Config do
+    @moduledoc """
+    Configuration struct for the LLM Agent.
+    """
+    @enforce_keys [:name, :llm_provider]
+    defstruct [
+      :name,
+      :llm_provider,
+      tools: [],
+      llm_options: %{},
+      # Default set later if not provided
+      system_prompt: nil,
+      input_schema: nil,
+      output_schema: nil,
+      output_key: nil,
+      generate_content_config: %{},
+      include_contents: :default,
+      prompt_builder: Adk.Agents.Llm.DefaultPromptBuilder,
+      memory_service: :in_memory
+    ]
+  end
+
+  defmodule State do
+    @moduledoc """
+    Internal state struct for the LLM Agent GenServer.
+    """
+    @enforce_keys [:session_id, :config]
+    defstruct [
+      :session_id,
+      # Holds the %Config{} struct
+      :config,
+      conversation_history: [],
+      current_session_id: nil,
+      session_state: %{}
+    ]
+  end
+
+  # --- Agent API ---
+
   @impl Adk.Agent
   def run(agent, input), do: Adk.Agent.run(agent, input)
 
-  @impl GenServer
-  def init(config) do
-    # Validate required config
-    case validate_config(config) do
-      :ok ->
-        # Initialize state
-        state = %{
-          name: Map.get(config, :name),
-          tools: Map.get(config, :tools, []),
-          llm_provider: Map.get(config, :llm_provider, :mock),
-          llm_options: Map.get(config, :llm_options, %{}),
-          system_prompt: Map.get(config, :system_prompt, default_system_prompt()),
-          memory: %{messages: []},
-          config: config
-        }
+  # --- GenServer Callbacks ---
 
-        {:ok, state}
+  @impl GenServer
+  def init(config_map) when is_map(config_map) do
+    with {:ok, config} <- validate_and_build_config(config_map) do
+      session_id = UUID.uuid4()
+      state = %State{session_id: session_id, config: config}
+      {:ok, state}
+    else
+      # Propagate descriptive error tuple
+      {:error, reason} -> {:stop, reason}
+    end
+  end
+
+  @impl GenServer
+  @spec handle_call({:run, any()}, any(), State.t()) ::
+          {:reply, {:ok, map()} | {:error, term()}, State.t()}
+  def handle_call({:run, input}, _from, %State{} = state) do
+    session_id = state.current_session_id || "session_#{System.unique_integer([:positive])}"
+    state = Map.put(state, :current_session_id, session_id)
+    prompt_builder_mod = state.config.prompt_builder
+
+    with {:ok, processed_input} <- process_input(input, state.config.input_schema),
+         {:ok, history} <-
+           get_conversation_history(
+             state.config.memory_service,
+             session_id,
+             state.config.include_contents
+           ),
+         state <-
+           Map.put(
+             state,
+             :conversation_history,
+             history ++ [%{role: "user", content: input_to_string(processed_input)}]
+           ),
+         {:ok, messages} <- prompt_builder_mod.build_messages(state),
+         {:ok, llm_response} <- execute_llm_or_tools(messages, state) do
+      # Format the response based on whether it's a tool call or direct response
+      response = %{
+        output: %{
+          output: llm_response.content,
+          status: if(llm_response.tool_calls, do: :tool_call_completed, else: :completed)
+        }
+      }
+
+      {:reply, {:ok, response}, state}
+    else
+      {:error, {:prompt_build_error, reason}} ->
+        {:reply, {:error, {:prompt_build_error, reason}}, state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  # --- Private Functions ---
+
+  # Config Validation
+  defp validate_and_build_config(config_map) do
+    # 1. Check for required keys first
+    required_keys = [:name, :llm_provider]
+    missing_keys = Enum.filter(required_keys, &(!Map.has_key?(config_map, &1)))
+
+    if !Enum.empty?(missing_keys) do
+      {:error, {:invalid_config, :missing_keys, missing_keys}}
+    else
+      # 2. Set defaults if needed
+      config_with_defaults = Map.put_new(config_map, :system_prompt, default_system_prompt())
+
+      config_with_defaults =
+        Map.put_new(config_with_defaults, :prompt_builder, Adk.Agents.Llm.DefaultPromptBuilder)
+
+      # 3. Attempt struct conversion (should succeed for required keys now)
+      try do
+        config = struct!(Config, config_with_defaults)
+
+        # 4. Perform further validations
+        with :ok <- validate_llm_provider(config.llm_provider),
+             :ok <- validate_tools(config.tools),
+             :ok <- validate_prompt_builder(config.prompt_builder) do
+          {:ok, config}
+        else
+          # Capture the first validation error
+          {:error, reason} -> {:error, reason}
+        end
+      rescue
+        # Catch ArgumentError from struct! if types are wrong for non-enforced keys
+        ArgumentError ->
+          {:error, {:invalid_config, :struct_conversion_failed, config_with_defaults}}
+
+        # Catch any other unexpected error during struct creation/validation
+        e ->
+          {:error, {:invalid_config, :unexpected_error, e}}
+      end
+    end
+  end
+
+  defp validate_llm_provider(provider) when is_atom(provider), do: :ok
+
+  defp validate_llm_provider(other),
+    do: {:error, {:invalid_config, :invalid_llm_provider_type, other}}
+
+  defp validate_tools(tools) when is_list(tools), do: :ok
+  defp validate_tools(other), do: {:error, {:invalid_config, :invalid_tools_type, other}}
+
+  defp validate_prompt_builder(module) when is_atom(module) do
+    # Check if the module implements the behaviour
+    case Code.ensure_loaded(module) do
+      {:module, _} ->
+        if function_exported?(module, :build_messages, 1) do
+          :ok
+        else
+          {:error,
+           {:invalid_config, :prompt_builder_missing_callback, {module, :build_messages, 1}}}
+        end
+
+      {:error, reason} ->
+        {:error, {:invalid_config, :prompt_builder_module_not_loaded, {module, reason}}}
+    end
+  end
+
+  defp validate_prompt_builder(other) do
+    {:error, {:invalid_config, :invalid_prompt_builder_type, other}}
+  end
+
+  # --- Input Processing ---
+
+  # No input schema, pass through
+  defp process_input(input, nil), do: {:ok, input}
+
+  defp process_input(input, schema_module) when is_binary(input) do
+    case JSON.decode(input) do
+      {:ok, decoded_map} ->
+        case struct(schema_module, decoded_map) do
+          # Successfully created struct
+          %_{} = valid_struct -> {:ok, valid_struct}
+          _ -> {:error, "Input JSON does not match schema #{inspect(schema_module)}"}
+        end
+
+      {:error, _} ->
+        {:error, "Input is not valid JSON"}
+    end
+  end
+
+  defp process_input(_input, schema_module) do
+    {:error,
+     "Input must be a JSON string when input_schema #{inspect(schema_module)} is specified"}
+  end
+
+  # Convert validated struct back for history if needed
+  defp input_to_string(%_{} = struct), do: JSON.encode!(struct)
+  defp input_to_string(other), do: to_string(other)
+
+  # --- Conversation History ---
+
+  # include_contents: :none
+  defp get_conversation_history(_service, _session_id, :none), do: {:ok, []}
+
+  defp get_conversation_history(service, session_id, _include_contents) do
+    # Fetch and format history from memory service
+    # This needs implementation based on Adk.Memory structure
+    Logger.debug("Fetching history for session #{session_id} with service #{inspect(service)}")
+    # Placeholder:
+    case Memory.get_sessions(service, session_id) do
+      {:ok, sessions} ->
+        # Assuming sessions are stored chronologically and need mapping to {:role, :content} format
+        history =
+          Enum.map(sessions, fn session_data ->
+            # Adapt this based on actual memory storage format
+            Map.get(session_data, :message, %{role: "unknown", content: inspect(session_data)})
+          end)
+
+        {:ok, history}
+
+      # Default to empty if fetch fails or no history
+      _ ->
+        {:ok, []}
+    end
+  end
+
+  # --- Core LLM/Tool Execution Logic ---
+
+  defp execute_llm_or_tools(messages, state) do
+    # No output schema - standard flow with potential tool usage
+    Logger.debug("[Agent #{state.config.name}] No output schema, proceeding with standard flow.")
+    # Initial LLM call to determine if a tool is needed
+    case call_llm(messages, state) do
+      {:ok, %{content: content}} ->
+        # Parse the tool call from the content
+        case parse_tool_call(content) do
+          {:ok, tool_name, tool_args} ->
+            # Execute the tool
+            case Adk.execute_tool(String.to_atom(tool_name), tool_args) do
+              {:ok, tool_result} ->
+                {:ok,
+                 %{content: tool_result, tool_calls: [%{name: tool_name, arguments: tool_args}]}}
+
+              {:error, reason} ->
+                {:error, {:tool_execution_failed, reason}}
+            end
+
+          {:error, _reason} ->
+            # Not a tool call, treat as direct response
+            {:ok, %{content: content, tool_calls: nil}}
+        end
 
       {:error, reason} ->
         {:error, reason}
     end
   end
 
-  @impl GenServer
-  def handle_call({:run, input}, _from, state) do
-    # Process the user input using the LLM agent
-    new_state = add_message(state, "user", input)
-
-    case process_with_llm(new_state) do
-      {:ok, response, final_state} ->
-        # Return the response and updated state
-        {:reply, {:ok, %{output: response}}, final_state}
-
-      {:error, reason, final_state} ->
-        {:reply, {:error, reason}, final_state}
-    end
-  end
-
-  # Private functions
-
-  defp validate_config(config) do
-    cond do
-      !is_map(config) ->
-        {:error, "Config must be a map"}
-
-      true ->
-        :ok
-    end
-  end
-
-  defp process_with_llm(state) do
-    # First, check if tools are provided
-    available_tools = get_available_tools(state.tools)
-
-    # Prepare the conversation history
-    messages = prepare_messages(state, available_tools)
-
-    # Get response from LLM
-    case Adk.LLM.chat(state.llm_provider, messages, state.llm_options) do
-      {:ok, response} ->
-        # Parse the response to see if it contains a tool call
-        case parse_response(response.content) do
-          {:tool_call, tool_name, params} ->
-            # Execute the tool
-            case execute_tool(tool_name, params, state) do
-              {:ok, tool_result, tool_state} ->
-                # Add the tool result to the conversation
-                tool_state = add_message(tool_state, "assistant", response.content)
-                tool_state = add_message(tool_state, "function", tool_result, %{name: tool_name})
-
-                # Process again with the tool result
-                process_with_llm(tool_state)
-
-              {:error, reason, error_state} ->
-                # Add the error to the conversation
-                error_state = add_message(error_state, "assistant", response.content)
-
-                error_state =
-                  add_message(error_state, "function", "Error: #{reason}", %{name: tool_name})
-
-                # Process again with the error
-                process_with_llm(error_state)
-            end
-
-          {:response, content} ->
-            # Just a normal response, no tool call
-            new_state = add_message(state, "assistant", content)
-            {:ok, content, new_state}
+  defp parse_tool_call(content) do
+    # Extract tool name and arguments from content like: call_tool("test_tool", {"input": "from_llm"})
+    case Regex.run(~r/call_tool\("([^"]+)",\s*(\{[^}]+\})\)/, content) do
+      [_, tool_name, args_json] ->
+        case JSON.decode(args_json) do
+          {:ok, args} -> {:ok, tool_name, args}
+          {:error, reason} -> {:error, {:invalid_json, reason}}
         end
 
-      {:error, reason} ->
-        {:error, reason, state}
+      _ ->
+        {:error, :invalid_tool_call_format}
     end
   end
 
-  defp get_available_tools(tool_names) do
-    # Get all registered tools
-    all_tools = Adk.list_tools()
+  # --- LLM Interaction ---
 
-    # Filter to just the requested tools if provided
-    if is_list(tool_names) && !Enum.empty?(tool_names) do
-      tool_names
-      |> Enum.map(&String.to_atom/1)
-      |> Enum.filter(fn name ->
-        Enum.any?(all_tools, fn module ->
-          module.definition().name == Atom.to_string(name)
-        end)
-      end)
-      |> Enum.map(fn name ->
-        Enum.find(all_tools, fn module ->
-          module.definition().name == Atom.to_string(name)
-        end)
-      end)
-    else
-      all_tools
-    end
-  end
+  defp call_llm(messages, state) do
+    Logger.debug(
+      "[Agent #{state.config.name}] Calling LLM #{state.config.llm_provider} with messages: #{inspect(messages)}"
+    )
 
-  defp prepare_messages(state, available_tools) do
-    # Start with the system prompt
-    system_message = %{
-      role: "system",
-      content: state.system_prompt <> "\n\nAvailable tools:\n#{format_tools(available_tools)}"
-    }
+    case LLM.chat(state.config.llm_provider, messages, state.config.llm_options) do
+      {:ok, %{content: content, tool_calls: tool_calls}} ->
+        {:ok, %{content: content, tool_calls: tool_calls}}
 
-    # Add the conversation history
-    [system_message | state.memory.messages]
-  end
-
-  defp format_tools(tools) do
-    tools
-    |> Enum.map(fn tool_module ->
-      definition = tool_module.definition()
-
-      """
-      #{definition.name}: #{definition.description}
-      Parameters: #{inspect(definition.parameters)}
-      """
-    end)
-    |> Enum.join("\n\n")
-  end
-
-  defp parse_response(content) do
-    # Look for tool call patterns in the response
-    # This is a simple regex-based approach, in a real implementation
-    # you might want something more sophisticated
-
-    tool_call_regex = ~r/call_tool\("([^"]+)",\s*(\{[^}]+\})\)/
-
-    case Regex.run(tool_call_regex, content) do
-      [_, tool_name, params_json] ->
-        # Try to parse the JSON params
-        case Jason.decode(params_json) do
-          {:ok, params} ->
-            {:tool_call, tool_name, params}
-
-          {:error, error} ->
-            # Log the error for debugging
-            IO.puts("JSON parse error: #{inspect(error)}, for params: #{params_json}")
-            # If JSON parsing fails, just return the response
-            {:response, content}
-        end
-
-      nil ->
-        # No tool call found
-        {:response, content}
-    end
-  end
-
-  defp execute_tool(tool_name, params, state) do
-    case Adk.Tool.execute(String.to_atom(tool_name), params) do
-      {:ok, result} ->
-        # Store the result in memory
-        tool_results = Map.get(state.memory, :tool_results, %{})
-        updated_tool_results = Map.put(tool_results, tool_name, result)
-        new_memory = Map.put(state.memory, :tool_results, updated_tool_results)
-        new_state = Map.put(state, :memory, new_memory)
-
-        {:ok, result, new_state}
+      {:ok, %{content: content}} ->
+        {:ok, %{content: content, tool_calls: nil}}
 
       {:error, reason} ->
-        {:error, reason, state}
+        {:error, reason}
     end
   end
 
-  defp add_message(state, role, content, metadata \\ %{}) do
-    # Create the new message
-    new_message = Map.merge(%{role: role, content: content}, metadata)
-
-    # Add it to the state
-    updated_messages = state.memory.messages ++ [new_message]
-    updated_memory = Map.put(state.memory, :messages, updated_messages)
-
-    # Update state
-    %{state | memory: updated_memory}
-  end
+  # --- Default System Prompt ---
 
   defp default_system_prompt do
     """
     You are a helpful AI assistant. You have access to a set of tools that you can use to answer the user's questions.
 
-    When you want to use a tool, respond with:
-    call_tool("tool_name", {"param1": "value1", "param2": "value2"})
+    To use a tool, the response MUST be a JSON object containing a `tool_calls` list.
+    Each item in the list should be an object with `id`, `type: "function"`, and `function` fields.
+    The `function` field should contain `name` (the tool name) and `arguments` (a JSON string of parameters).
 
-    For example:
-    call_tool("weather", {"location": "New York"})
+    Example of a response using a tool:
+    ```json
+    {
+      "tool_calls": [
+        {
+          "id": "call_abc123",
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "arguments": "{\"location\": \"New York\", \"unit\": \"fahrenheit\"}"
+          }
+        }
+      ]
+    }
+    ```
 
-    After you call a tool, you'll receive the result and can continue the conversation.
-    If you can answer the user's question without using a tool, just respond normally.
+    If you need to call multiple tools, include multiple objects in the `tool_calls` list.
+    If you can answer the user's question without using a tool, respond with your answer directly as plain text. Do NOT wrap plain text responses in JSON.
+    Only respond with the JSON structure when you intend to call one or more tools.
     """
   end
 
-  def start_link({config, opts}) do
-    GenServer.start_link(__MODULE__, config, opts)
+  # --- Start Link ---
+
+  # Allow passing GenServer options
+  def start_link({config_map, opts}) when is_map(config_map) and is_list(opts) do
+    GenServer.start_link(__MODULE__, config_map, opts)
   end
 
-  def start_link(config) when is_map(config) do
-    GenServer.start_link(__MODULE__, config, [])
+  # Default start_link without options
+  def start_link(config_map) when is_map(config_map) do
+    GenServer.start_link(__MODULE__, config_map, [])
   end
 end

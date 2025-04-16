@@ -16,8 +16,12 @@ defmodule Adk.LLM do
       {:ok, "Why don't scientists trust atoms? Because they make up everything!"}
   """
   def complete(provider, prompt, options \\ %{}) do
-    provider_module = get_provider_module(provider)
-    provider_module.complete(prompt, options)
+    with {:ok, provider_module} <- get_provider_module(provider) do
+      provider_module.complete(prompt, options)
+    else
+      # Propagate the error tuple
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   @doc """
@@ -37,8 +41,12 @@ defmodule Adk.LLM do
       {:ok, %{role: "assistant", content: "Elixir is a functional, concurrent programming language..."}}
   """
   def chat(provider, messages, options \\ %{}) do
-    provider_module = get_provider_module(provider)
-    provider_module.chat(messages, options)
+    with {:ok, provider_module} <- get_provider_module(provider) do
+      provider_module.chat(messages, options)
+    else
+      # Propagate the error tuple
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   @doc """
@@ -52,19 +60,39 @@ defmodule Adk.LLM do
       %{name: "openai", api_key: "..."}
   """
   def config(provider) do
-    provider_module = get_provider_module(provider)
-    provider_module.config()
+    with {:ok, provider_module} <- get_provider_module(provider) do
+      provider_module.config()
+    else
+      # Propagate the error tuple
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   # Private functions
 
   defp get_provider_module(provider) when is_atom(provider) do
+    # TODO: Add Langchain provider mapping
     case provider do
-      :mock -> Adk.LLM.Providers.Mock
-      :openai -> Adk.LLM.Providers.OpenAI
-      :anthropic -> Adk.LLM.Providers.Anthropic
-      module when is_atom(module) -> module
-      _ -> raise ArgumentError, "Unknown LLM provider: #{inspect(provider)}"
+      :mock ->
+        {:ok, Adk.LLM.Providers.Mock}
+
+      # Added Langchain
+      :langchain ->
+        {:ok, Adk.LLM.Providers.Langchain}
+
+      # :openai -> {:ok, Adk.LLM.Providers.OpenAI} # Assuming these might exist later
+      # :anthropic -> {:ok, Adk.LLM.Providers.Anthropic}
+      module when is_atom(module) ->
+        # Assume any other atom is a potential module. Validation happens at call time.
+        {:ok, module}
+
+      _ ->
+        {:error, {:unknown_provider, provider}}
     end
+  end
+
+  # Handle cases where a non-atom is passed
+  defp get_provider_module(provider) do
+    {:error, {:invalid_provider_type, provider}}
   end
 end
