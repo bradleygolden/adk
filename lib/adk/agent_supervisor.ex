@@ -51,6 +51,7 @@ defmodule Adk.AgentSupervisor do
       :parallel -> Adk.Agents.Parallel
       :loop -> Adk.Agents.Loop
       :llm -> Adk.Agents.LLM
+      :langchain -> Adk.Agents.Langchain
       module when is_atom(module) -> module  # Allow custom agent modules
       _ -> raise ArgumentError, "Unknown agent type: #{inspect(agent_type)}"
     end

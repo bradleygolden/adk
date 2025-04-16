@@ -12,6 +12,7 @@ A powerful framework for building, running, and managing intelligent agents in E
   - **Parallel Agents**: Run operations concurrently for high-performance tasks
   - **Loop Agents**: Repeat actions until specific conditions are met
   - **LLM Agents**: Use language models for reasoning and decision-making
+  - **LangChain Agents**: Integrate with the LangChain Elixir library for enhanced capabilities
   
 - **Tool System** - Plugin architecture for agents to interact with external systems:
   - Behavior-based interface for easy tool creation
@@ -45,7 +46,9 @@ Add `adk` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:adk, "~> 0.1.0"}
+    {:adk, "~> 0.1.0"},
+    # Optional: add LangChain support
+    {:langchain, "~> 0.3.2", optional: true}
   ]
 end
 ```
@@ -123,6 +126,32 @@ Adk.register_tool(Adk.Tools.MemoryTool)
 # the memory tool to store it for future reference
 ```
 
+### LangChain-powered Agent
+
+```elixir
+# Register tools
+Adk.register_tool(MyApp.Tools.Weather)
+Adk.register_tool(Adk.Tools.MemoryTool)
+
+# Create a LangChain agent
+{:ok, agent} = Adk.create_agent(:langchain, %{
+  name: "langchain_assistant",
+  llm_options: %{
+    provider: :anthropic,
+    model: "claude-2",
+    temperature: 0.5
+  },
+  system_prompt: "You are a helpful assistant that uses tools to solve problems",
+  tools: ["weather", "memory_tool"]
+})
+
+# Run the agent
+{:ok, result} = Adk.run(agent, "Plan a picnic based on the weather in Paris tomorrow")
+
+# The LangChain agent will use the underlying LangChain library's agent capabilities
+# to reason about the query and call the appropriate tools
+```
+
 ### Multi-Agent System with Memory
 
 ```elixir
@@ -169,6 +198,7 @@ The ADK supports several types of agents:
 - **Parallel**: Executes multiple tasks concurrently for improved performance
 - **Loop**: Repeats actions until a condition is met
 - **LLM**: Uses language models for decision making and tool selection
+- **LangChain**: Leverages the LangChain Elixir library for agent capabilities
 
 ## Tools
 

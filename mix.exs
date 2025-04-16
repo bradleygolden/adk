@@ -26,7 +26,9 @@ defmodule Adk.MixProject do
   defp deps do
     [
       {:ex_doc, "~> 0.29", only: :dev, runtime: false},
-      {:jason, "~> 1.4"}
+      {:jason, "~> 1.4"},
+      {:langchain, "~> 0.3.2", optional: true},
+      {:meck, "~> 0.9", only: :test}
     ]
   end
 
