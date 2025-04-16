@@ -12,7 +12,7 @@ A powerful framework for building, running, and managing intelligent agents in E
   - **Parallel Agents**: Run operations concurrently for high-performance tasks
   - **Loop Agents**: Repeat actions until specific conditions are met
   - **LLM Agents**: Use language models for reasoning and decision-making
-  - **LangChain Agents**: Integrate with the LangChain Elixir library for enhanced capabilities
+  - **LangChain Agents**: Integrate with the LangChain Elixir library for enhanced capabilities with robust version compatibility
   
 - **Tool System** - Plugin architecture for agents to interact with external systems:
   - Behavior-based interface for easy tool creation
@@ -21,8 +21,8 @@ A powerful framework for building, running, and managing intelligent agents in E
   
 - **Memory Services** - Persistent state across interactions:
   - Short-term memory within agent sessions
-  - Long-term memory via pluggable storage backends
-  - Memory search and retrieval capabilities
+  - Long-term memory via pluggable storage backends (history stored as `Adk.Event` structs)
+  - Event-based history retrieval
   
 - **Agent Orchestration** - Powerful composition patterns:
   - Hierarchical agent relationships
@@ -47,11 +47,18 @@ Add `adk` to your list of dependencies in `mix.exs`:
 def deps do
   [
     {:adk, "~> 0.1.0"},
-    # Optional: add LangChain support
+    # Optional: add LangChain support (version 0.3.2 or newer recommended)
     {:langchain, "~> 0.3.2", optional: true}
   ]
 end
 ```
+
+The LangChain integration is completely optional. If present, ADK will automatically detect and use it, providing additional agent capabilities through the `:langchain` agent type. The integration is designed to be:
+
+- **Adaptive**: Works with multiple LangChain versions by detecting API differences at runtime
+- **Resilient**: Provides multiple fallback mechanisms for handling API changes
+- **Transparent**: Works seamlessly within the ADK agent framework
+- **Flexible**: Supports all major LLM providers available in LangChain
 
 ## Usage Examples
 
@@ -77,7 +84,8 @@ defmodule MyApp.Tools.Weather do
   end
   
   @impl true
-  def execute(%{"location" => location}) do
+  def execute(%{"location" => location}, _context) do
+    # _context contains %{session_id: ..., invocation_id: ..., tool_call_id: ...}
     # In a real implementation, you would call a weather API
     {:ok, "The weather in #{location} is sunny."}
   end
@@ -128,21 +136,33 @@ Adk.register_tool(Adk.Tools.MemoryTool)
 
 ### LangChain-powered Agent
 
+The LangChain agent provides a robust integration with the LangChain Elixir library, supporting a variety of LLM providers and versions.
+
 ```elixir
 # Register tools
 Adk.register_tool(MyApp.Tools.Weather)
 Adk.register_tool(Adk.Tools.MemoryTool)
 
 # Create a LangChain agent
+# IMPORTANT: For the :langchain adapter, LLM options like :provider, :model,
+# :temperature, :api_key, etc., MUST be nested under an :llm_options key
+# in the configuration map.
+
+# Correct configuration for :langchain adapter
+# Options MUST be nested under :llm_options
 {:ok, agent} = Adk.create_agent(:langchain, %{
-  name: "langchain_assistant",
-  llm_options: %{
-    provider: :anthropic,
-    model: "claude-2",
-    temperature: 0.5
+  name: :my_langchain_agent,
+  llm_options: %{ # <-- Nest options here
+    provider: :openai,          # (:openai, :anthropic, :google, :ollama, :mistral)
+    model: "gpt-4",             # Model name appropriate for the provider
+    # api_key: "your_api_key",  # Add if required by provider/model
+    # temperature: 0.5,         # Optional
+    # max_tokens: 1000,         # Optional
+    # stream: false,            # Optional
+    unwrapped_errors: false     # Optional (Set to true for raw error propagation)
   },
   system_prompt: "You are a helpful assistant that uses tools to solve problems",
-  tools: ["weather", "memory_tool"]
+  tools: ["weather", "memory_tool"] # Example tools
 })
 
 # Run the agent
@@ -150,6 +170,53 @@ Adk.register_tool(Adk.Tools.MemoryTool)
 
 # The LangChain agent will use the underlying LangChain library's agent capabilities
 # to reason about the query and call the appropriate tools
+```
+
+The integration handles different LangChain versions (0.3.x and newer) and provides graceful fallbacks for API differences. It automatically detects and adapts to API changes between versions, making your code more future-proof.
+
+It supports the following LLM providers:
+
+- `:openai` - OpenAI models (GPT-3.5, GPT-4, etc.)
+- `:anthropic` - Anthropic Claude models
+- `:google` - Google AI (Gemini models)
+- `:ollama` - Self-hosted open source models via Ollama
+- `:mistral` - Mistral AI models
+
+**Enhanced Error Handling:**
+
+- Robust error detection and recovery
+- Graceful fallbacks when primary approaches fail
+- Detailed error messages for easier debugging
+- Support for both map and keyword list parameter formats
+- Option for raw error propagation via `unwrapped_errors: true` setting
+- Handles API differences between LangChain versions automatically
+
+**Application Integration:**
+
+For advanced integration in applications that need control over error handling:
+
+```elixir
+# Create a LangChain agent with raw error handling
+{:ok, agent} = Adk.create_agent(:langchain, %{
+  name: "integration_agent",
+  llm_options: %{
+    provider: :openai,
+    model: "gpt-4",
+    unwrapped_errors: true  # Pass raw errors to the application
+  },
+  tools: ["my_tool"]
+})
+
+# This will propagate the exact error information for custom handling
+case Adk.run(agent, user_input) do
+  {:ok, result} -> 
+    # Success case
+    handle_success(result)
+    
+  {:error, detailed_error, _state} -> 
+    # Application can inspect and handle the exact error
+    handle_specific_error(detailed_error)
+end
 ```
 
 ### Multi-Agent System with Memory
@@ -175,12 +242,11 @@ Adk.register_tool(Adk.Tools.MemoryTool)
     %{
       type: "function",
       function: fn results ->
-        # Store the final plan in memory
-        user_id = "user_123"
-        Adk.add_to_memory(:in_memory, user_id, results)
-        
-        # Return formatted results
-        "Trip planned! Weather and travel arrangements confirmed."
+        # Process results from previous steps (weather_specialist, travel_specialist)
+        # Memory is updated automatically with Adk.Event structs throughout the agent run.
+        # The final result could be formatted here based on 'results'.
+        IO.inspect(results, label: "Final results in coordinator")
+        "Trip planned! Weather and travel arrangements confirmed based on gathered info."
       end
     }
   ]
@@ -190,34 +256,132 @@ Adk.register_tool(Adk.Tools.MemoryTool)
 {:ok, result} = Adk.run(coordinator, "Plan a trip to Paris next week")
 ```
 
+### Input/Output Schema Validation
+
+ADK provides schema validation for both input and output through Elixir structs:
+
+```elixir
+defmodule MyApp.Schemas.InputSchema do
+  @derive {JSON.Encoder, only: [:query, :user_id]}
+  @enforce_keys [:query]
+  defstruct [:query, :user_id]
+end
+
+defmodule MyApp.Schemas.OutputSchema do
+  @derive {JSON.Encoder, only: [:answer, :confidence]}
+  @enforce_keys [:answer, :confidence]
+  defstruct [:answer, :confidence]
+end
+```
+
+#### Using Schemas with Agents
+
+You can specify input and output schemas when creating an agent:
+
+```elixir
+{:ok, agent} = Adk.create_agent(:langchain, %{
+  name: :schema_validated_agent,
+  llm_options: %{
+    provider: :openai,
+    model: "gpt-3.5-turbo",
+    api_key: "your-api-key"
+  },
+  input_schema: MyApp.Schemas.InputSchema,   # Validates input before processing
+  output_schema: MyApp.Schemas.OutputSchema  # Validates LLM output
+})
+
+# Valid input example
+{:ok, result} = Adk.run(agent, %{query: "What's the weather?", user_id: 123})
+# result.output will be a validated OutputSchema struct
+
+# Invalid input example
+{:error, {:schema_validation_failed, :input, _details, MyApp.Schemas.InputSchema}} = 
+  Adk.run(agent, %{user_id: 456}) # Missing required query field
+
+# Invalid output example (if LLM returns incomplete data)
+{:error, {:schema_validation_failed, :output, _details, MyApp.Schemas.OutputSchema}} =
+  Adk.run(agent, %{query: "What's the weather?", user_id: 123}) # If LLM output doesn't match schema
+```
+
+Schema validation provides several benefits:
+- **Type Safety**: Ensures inputs and outputs match expected types
+- **Required Fields**: Validates presence of mandatory fields through `@enforce_keys`
+- **Structured Data**: Converts maps to Elixir structs automatically
+- **Error Handling**: Provides detailed validation error messages
+- **JSON Encoding**: Automatically handles JSON encoding/decoding through `@derive {JSON.Encoder, only: [...]}`
+
 ## Agent Types
 
 The ADK supports several types of agents:
 
-- **Sequential**: Executes a series of steps in order, passing results between steps
-- **Parallel**: Executes multiple tasks concurrently for improved performance
-- **Loop**: Repeats actions until a condition is met
-- **LLM**: Uses language models for decision making and tool selection
-- **LangChain**: Leverages the LangChain Elixir library for agent capabilities
+- **Sequential**: Executes a series of steps in order, passing results between steps.
+- **Parallel**: Executes multiple tasks concurrently for improved performance.
+- **Loop**: Repeats actions until a condition is met.
+- **LLM**: Uses language models for decision making and tool selection, utilizing configured tools and system prompts.
+- **LangChain**: Leverages the LangChain Elixir library for direct chat interactions via `Adk.run`. Currently supports `:openai` and `:anthropic` providers. See provider code for details on configuration and potential future provider support.
 
 ## Tools
 
-Tools are the primary way for agents to interact with the world. The ADK provides a simple interface for creating and registering tools that can be used by agents.
+Tools are the primary way for agents to interact with the world. The ADK provides a simple interface for creating and registering tools.
+
+To create a tool, `use Adk.Tool` and implement the required callbacks:
+
+- `definition/0`: Returns a map describing the tool (name, description, parameters). Can optionally include `:output_schema` (JSON schema for the output) and `:long_running?` (boolean hint).
+- `execute/2`: Executes the tool logic. It receives the parameters map and a `context` map (`%{session_id: String.t(), invocation_id: String.t() | nil, tool_call_id: String.t() | nil}`). Returns `{:ok, result}` or `{:error, reason}`.
+
+See the `MyApp.Tools.Weather` example above for a basic implementation.
 
 ## Memory
 
-The Memory service allows agents to store and retrieve information across sessions or interactions:
+The Memory service allows agents to maintain state and history across interactions within a session. The history is stored as a sequence of `Adk.Event` structs.
+
+Each `Adk.Event` captures details like:
+- `:id`: Unique event ID
+- `:timestamp`: When the event occurred
+- `:session_id`: The session this event belongs to
+- `:invocation_id`: ID linking events within a single `Adk.run`
+- `:author`: Who generated the event (`:user`, `:model`, `:tool`, etc.)
+- `:content`: The main content (e.g., user message, model text response)
+- `:tool_calls`: List of tool calls requested (if any)
+- `:tool_results`: List of corresponding tool results (if any)
+
+You interact with memory primarily through these functions:
 
 ```elixir
-# Store information
-Adk.add_to_memory(:in_memory, "user_123", "Important information")
+# Define a session ID (e.g., user ID, conversation ID)
+session_id = "user_123_conv_abc"
+invocation_id = UUID.uuid4() # Typically generated by Adk.run
 
-# Retrieve stored information
-{:ok, sessions} = Adk.get_memory(:in_memory, "user_123")
+# Add a user message event to the history
+:ok = Adk.Memory.add_message(:in_memory, session_id,
+  author: :user,
+  content: "What's the weather like?",
+  invocation_id: invocation_id
+)
 
-# Search memory
-{:ok, results} = Adk.search_memory(:in_memory, "user_123", "important")
+# Add a model response event (potentially with tool calls)
+:ok = Adk.Memory.add_message(:in_memory, session_id,
+  author: :model,
+  content: "Calling the weather tool...",
+  tool_calls: [%{id: "call_123", name: "weather", args: %{"location" => "London"}}],
+  invocation_id: invocation_id
+)
+
+# Add a tool result event
+:ok = Adk.Memory.add_message(:in_memory, session_id,
+  author: :tool,
+  tool_results: [%{id: "call_123", result: "The weather in London is sunny."}],
+  invocation_id: invocation_id
+)
+
+# Retrieve the full event history for the session
+{:ok, history} = Adk.Memory.get_history(:in_memory, session_id)
+
+# history is now a list of Adk.Event structs
+IO.inspect(history)
 ```
+
+The ADK framework automatically manages adding events to memory during an `Adk.run` call based on user input, model responses, and tool interactions. The `Adk.Memory.add_message/3` function is also available for manual history management if needed.
 
 ## Agent-to-Agent Communication
 
