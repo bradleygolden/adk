@@ -25,7 +25,18 @@ defmodule AdkTest do
   end
 
   setup do
-    # Only register the test tool; registries and supervisors are started by the application
+    # Clear the registry before each test
+    for tool <- Adk.ToolRegistry.list() do
+      name =
+        case tool.definition()[:name] do
+          n when is_binary(n) -> String.to_atom(n)
+          n when is_atom(n) -> n
+          _ -> tool
+        end
+
+      Adk.ToolRegistry.unregister(name)
+    end
+
     Adk.register_tool(TestTool)
     :ok
   end

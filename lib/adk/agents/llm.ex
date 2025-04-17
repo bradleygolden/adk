@@ -1,8 +1,13 @@
 defmodule Adk.Agents.LLM do
   @moduledoc """
-  An LLM-driven agent that uses a language model to determine its actions.
+  Implements an LLM-driven workflow agent per the Adk pattern.
 
-  This agent uses an LLM to decide which tools to call and how to respond to input.
+  This agent uses a language model to determine actions, tool calls, and responses. Steps, prompt builder, and LLM provider are defined in the agent's configuration. Supports logging, memory integration, and error propagation. Implements the `Adk.Agent` behaviour.
+
+  Extension points:
+  - Add new tool call or message handling logic by extending `execute_llm_or_tools/2`.
+  - Customize prompt building by providing a custom prompt builder module.
+  - See https://google.github.io/adk-docs/Agents/Workflow-agents for design rationale.
   """
   use GenServer
   alias Adk.Memory
@@ -56,6 +61,9 @@ defmodule Adk.Agents.LLM do
   @impl Adk.Agent
   def run(agent, input), do: Adk.Agent.run(agent, input)
 
+  @impl Adk.Agent
+  def handle_request(_input, state), do: {:ok, %{output: "Not implemented"}, state}
+
   # --- GenServer Callbacks ---
 
   @impl GenServer
@@ -71,8 +79,6 @@ defmodule Adk.Agents.LLM do
   end
 
   @impl GenServer
-  @spec handle_call({:run, any()}, any(), State.t()) ::
-          {:reply, {:ok, map()} | {:error, term()}, State.t()}
   def handle_call({:run, input}, _from, %State{} = state) do
     session_id = state.current_session_id || "session_#{System.unique_integer([:positive])}"
     state = Map.put(state, :current_session_id, session_id)
@@ -109,6 +115,11 @@ defmodule Adk.Agents.LLM do
       {:error, reason} ->
         {:reply, {:error, reason}, state}
     end
+  end
+
+  @impl GenServer
+  def handle_call(:get_state, _from, %State{} = state) do
+    {:reply, {:ok, state}, state}
   end
 
   # --- Private Functions ---
@@ -334,13 +345,7 @@ defmodule Adk.Agents.LLM do
 
   # --- Start Link ---
 
-  # Allow passing GenServer options
-  def start_link({config_map, opts}) when is_map(config_map) and is_list(opts) do
+  def start_link(config_map, opts \\ []) when is_map(config_map) do
     GenServer.start_link(__MODULE__, config_map, opts)
-  end
-
-  # Default start_link without options
-  def start_link(config_map) when is_map(config_map) do
-    GenServer.start_link(__MODULE__, config_map, [])
   end
 end

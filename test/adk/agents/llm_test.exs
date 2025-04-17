@@ -59,5 +59,48 @@ defmodule Adk.Agents.LLMTest do
       assert result.output.output == direct_answer
       assert result.output.status == :completed
     end
+
+    test "llm provider returns an error" do
+      agent_config = %{
+        name: :llm_error_test,
+        tools: ["test_tool"],
+        llm_provider: Adk.Test.MockLLMProvider
+      }
+
+      {:ok, agent} = Adk.create_agent(:llm, agent_config)
+      # Simulate provider error
+      Adk.Test.MockLLMStateAgent.set_response({:error, :provider_failed})
+      assert {:error, :provider_failed} = Adk.run(agent, "trigger error")
+    end
+
+    test "tool call fails" do
+      agent_config = %{
+        name: :llm_tool_fail_test,
+        tools: ["nonexistent_tool"],
+        llm_provider: Adk.Test.MockLLMProvider
+      }
+
+      {:ok, agent} = Adk.create_agent(:llm, agent_config)
+      # Simulate a tool call to a tool that doesn't exist
+      Adk.Test.MockLLMStateAgent.set_response(
+        "call_tool(\"nonexistent_tool\", {\"input\": \"fail\"})"
+      )
+
+      assert {:error, {:tool_execution_failed, {:tool_not_found, :nonexistent_tool}}} =
+               Adk.run(agent, "fail tool call")
+    end
+
+    test "handles empty input" do
+      agent_config = %{
+        name: :llm_empty_input_test,
+        tools: ["test_tool"],
+        llm_provider: Adk.Test.MockLLMProvider
+      }
+
+      {:ok, agent} = Adk.create_agent(:llm, agent_config)
+      Adk.Test.MockLLMStateAgent.set_response("Empty input handled.")
+      {:ok, result} = Adk.run(agent, "")
+      assert result.output.output == "Empty input handled."
+    end
   end
 end

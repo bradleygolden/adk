@@ -1,6 +1,40 @@
 defmodule Adk.LLM.Providers.Langchain do
   @moduledoc """
-  Handles interaction with Langchain API for LLM tasks.
+  Adapter for the LangChain Elixir library, providing LLM and tool-calling capabilities for Adk agents.
+
+  ## Overview
+
+  This module implements the `Adk.LLM.Provider` behaviour for the [LangChain Elixir library](https://hexdocs.pm/langchain/). It enables Adk agents to use OpenAI, Anthropic, and other LLMs supported by LangChain, including tool-calling workflows.
+
+  ## Configuration
+
+  To use this provider, set in your config:
+
+      config :adk, :llm_provider, :langchain
+
+  Supported options (pass as `options` to `Adk.LLM.complete/3` or `chat/3`):
+  - `:model` (string, e.g. "gpt-3.5-turbo")
+  - `:temperature` (float, default 0.7)
+  - `:max_tokens` (integer, default 1000)
+  - `:provider` (:openai | :anthropic, default :openai)
+  - `:api_key` (string, overrides config)
+  - `:endpoint` (string, custom API URL)
+  - `:tools` (list of tool names for tool-calling)
+
+  See `Adk.LLM` for usage and dynamic dispatch details.
+
+  ## Error Handling
+
+  All errors are returned as `{:error, reason}` tuples. Unexpected provider or tool issues are logged and surfaced in the result.
+
+  ## Tool Calling
+
+  Tool definitions are fetched from the Adk tool registry and formatted for OpenAI-compatible tool-calling.
+
+  ## Extension Points
+  - Add error handling for new LangChain API changes or edge cases.
+  - Extend tool formatting or message conversion as LangChain evolves.
+  - See https://google.github.io/adk-docs/LLM for design rationale.
   """
   require Logger
   use Adk.LLM.Provider
@@ -97,6 +131,14 @@ defmodule Adk.LLM.Providers.Langchain do
                 |> LangChain.Chains.LLMChain.run()
 
               case run_result do
+                # Handle the specific error case seen in logs directly
+                {:ok, [error: %LangChain.LangChainError{message: "Unexpected response"} = err]} ->
+                  Logger.error(
+                    "LLMChain run returned an unexpected response error block: #{inspect(err)}"
+                  )
+
+                  {:error, {:llm_provider_error, "LLMChain run returned unexpected error block"}}
+
                 {:ok, updated_chain} ->
                   case updated_chain.messages |> List.last() do
                     nil ->
@@ -126,14 +168,6 @@ defmodule Adk.LLM.Providers.Langchain do
                       tool_calls = Map.get(other_message, :tool_calls)
                       {:ok, %{content: content, tool_calls: tool_calls}}
                   end
-
-                # Handle the specific error case seen in logs directly
-                {:ok, [error: %LangChain.LangChainError{message: "Unexpected response"} = err]} ->
-                  Logger.error(
-                    "LLMChain run returned an unexpected response error block: #{inspect(err)}"
-                  )
-
-                  {:error, {:llm_provider_error, "LLMChain run returned unexpected error block"}}
 
                 # Handle potential error formats from LLMChain.run
                 # 3-tuple error
@@ -173,6 +207,9 @@ defmodule Adk.LLM.Providers.Langchain do
 
   # Utility functions (public for testing)
 
+  @doc """
+  Checks if the LangChain library is available and loaded. Returns :ok or {:error, reason}.
+  """
   def ensure_langchain_available do
     # Multi-step approach to reliably detect if LangChain is available
 
@@ -251,7 +288,7 @@ defmodule Adk.LLM.Providers.Langchain do
     end
   end
 
-  # Helper to format ADK tool definitions for OpenAI
+  # Helper to format Adk tool definitions for OpenAI
   defp format_tools_for_openai(tool_modules) do
     Enum.map(tool_modules, fn module ->
       try do
@@ -341,7 +378,7 @@ defmodule Adk.LLM.Providers.Langchain do
   defp get_api_key_from_config(_), do: nil
 
   def convert_message_to_langchain(%{role: role, content: content}) do
-    # Map ADK message roles to LangChain roles with more robust handling
+    # Map Adk message roles to LangChain roles with more robust handling
     role_atom =
       case role do
         "system" ->

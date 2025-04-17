@@ -1,6 +1,12 @@
 defmodule Adk.Tools.MemoryTool do
   @moduledoc """
-  A tool for agents to interact with the memory service.
+  Implements a memory tool for agent workflows, bridging agent steps to memory operations.
+
+  This tool allows agents to store, retrieve, and search information in the configured memory service. Implements the `Adk.Tool` behaviour.
+
+  Extension points:
+  - Add new memory actions by extending the `execute/2` callback.
+  - See https://google.github.io/adk-docs/Tools for design rationale.
   """
   use Adk.Tool
 

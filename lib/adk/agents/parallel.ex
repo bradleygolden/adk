@@ -1,11 +1,13 @@
 defmodule Adk.Agents.Parallel do
   @moduledoc """
-  A parallel agent that executes multiple tasks concurrently.
+  Implements a parallel workflow agent per the Adk pattern.
 
-  This agent type is useful for running independent tasks that don't rely
-  on each other's outputs, providing potential performance benefits.
-  The final output is a map of task index to individual task output,
-  along with a combined string representation.
+  This agent executes multiple tasks concurrently (tools, functions, or transforms), collecting their outputs. Tasks are defined in the agent's configuration. Supports logging, memory integration, and error propagation. Implements the `Adk.Agent` behaviour.
+
+  Extension points:
+  - Add new task types by extending `execute_task/4`.
+  - Customize event logging by overriding helper functions.
+  - See https://google.github.io/adk-docs/Agents/Workflow-agents for design rationale.
   """
   use GenServer
   alias Adk.Memory
@@ -48,6 +50,9 @@ defmodule Adk.Agents.Parallel do
   @impl Adk.Agent
   def run(agent, input), do: Adk.Agent.run(agent, input)
 
+  @impl Adk.Agent
+  def handle_request(_input, state), do: {:ok, %{output: "Not implemented"}, state}
+
   # --- GenServer Callbacks ---
 
   @impl GenServer
@@ -63,8 +68,6 @@ defmodule Adk.Agents.Parallel do
   end
 
   @impl GenServer
-  @spec handle_call({:run, any()}, any(), State.t()) ::
-          {:reply, {:ok, map()} | {:error, term()}, State.t()}
   def handle_call({:run, input}, _from, %State{} = state) do
     invocation_id = UUID.uuid4()
 
@@ -101,6 +104,11 @@ defmodule Adk.Agents.Parallel do
         error_tuple = {:error, {:memory_error, :add_message_failed, {:user_input, reason}}}
         {:reply, error_tuple, state}
     end
+  end
+
+  @impl GenServer
+  def handle_call(:get_state, _from, %State{} = state) do
+    {:reply, {:ok, state}, state}
   end
 
   # --- Private Functions ---
@@ -146,7 +154,6 @@ defmodule Adk.Agents.Parallel do
   defp validate_tasks(_tasks), do: :ok
 
   # Parallel Task Execution
-  @spec run_parallel_tasks(any(), State.t(), String.t()) :: {:ok, map()} | {:error, term()}
   defp run_parallel_tasks(input, %State{} = state, invocation_id) do
     # Execute all tasks concurrently using Task.async_stream
     # The stream yields {:ok, {index, task_result}} or {:exit, reason}
@@ -193,7 +200,6 @@ defmodule Adk.Agents.Parallel do
   end
 
   # Execute a single task (similar structure to execute_step in other agents)
-  @spec execute_task(map(), any(), State.t(), String.t()) :: {:ok, any()} | {:error, term()}
   defp execute_task(
          %{type: "tool", tool: tool_name_str, params: params} = _task_config,
          # Tool tasks often ignore direct input
@@ -311,7 +317,6 @@ defmodule Adk.Agents.Parallel do
 
   # --- Helper Functions for Logging Events ---
 
-  @spec log_tool_result_event(State.t(), String.t(), map()) :: :ok | :error
   defp log_tool_result_event(state, invocation_id, tool_result_map) do
     event_opts = [
       author: :tool,
@@ -335,8 +340,6 @@ defmodule Adk.Agents.Parallel do
     end
   end
 
-  @spec log_agent_task_event(State.t(), String.t(), map(), any(), any(), :ok | :error) ::
-          :ok | :error
   defp log_agent_task_event(
          state,
          invocation_id,
@@ -377,11 +380,7 @@ defmodule Adk.Agents.Parallel do
 
   # --- Start Link ---
 
-  def start_link({config_map, opts}) when is_map(config_map) and is_list(opts) do
+  def start_link(config_map, opts \\ []) when is_map(config_map) do
     GenServer.start_link(__MODULE__, config_map, opts)
-  end
-
-  def start_link(config_map) when is_map(config_map) do
-    GenServer.start_link(__MODULE__, config_map, [])
   end
 end

@@ -1,6 +1,34 @@
 defmodule Adk.Tool do
   @moduledoc """
-  Behavior and utilities for implementing tools in the ADK framework.
+  Behavior and utilities for implementing tools in the Adk framework.
+
+  ## Extension Points
+
+  To define a custom tool, `use Adk.Tool` in your module. Override the `definition/0` and `execute/2` callbacks to provide your tool's metadata and logic.
+
+  - `definition/0`: Returns a map describing the tool's name, description, parameters, and optionally output schema and long-running status.
+  - `execute/2`: Implements the tool's core logic, receiving parameters and context.
+
+  ## Example
+
+      defmodule MyApp.Tools.Echo do
+        use Adk.Tool
+
+        @impl true
+        def definition do
+          %{
+            name: "echo",
+            description: "Echoes the input text.",
+            parameters: %{type: :object, properties: %{text: %{type: :string}}}
+          }
+        end
+
+        @impl true
+        def execute(%{"text" => text}, _context) do
+          {:ok, %{echo: text}}
+        end
+      end
+
   """
 
   @typedoc """
@@ -63,6 +91,14 @@ defmodule Adk.Tool do
         }
       end
 
+      @doc """
+      Default execute/2 stub that returns an error tuple. Tool modules should override this callback.
+      """
+      @impl Adk.Tool
+      def execute(_params, _context) do
+        {:error, {:not_implemented, :execute, __MODULE__}}
+      end
+
       # Helper to convert module name to string
       defp module_name_to_string(module) do
         module
@@ -74,7 +110,7 @@ defmodule Adk.Tool do
       end
 
       # Allow overriding default implementations
-      defoverridable definition: 0
+      defoverridable definition: 0, execute: 2
     end
   end
 end

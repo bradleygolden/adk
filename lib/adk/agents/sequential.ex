@@ -1,6 +1,13 @@
 defmodule Adk.Agents.Sequential do
   @moduledoc """
-  A sequential agent that executes a series of steps in order.
+  Implements a sequential workflow agent per the Adk pattern.
+
+  This agent executes a series of steps (tools, functions, or transforms) in order, passing the output of each step as input to the next. Steps are defined in the agent's configuration. Supports logging, memory integration, and error propagation. Implements the `Adk.Agent` behaviour.
+
+  Extension points:
+  - Add new step types by extending `execute_step/4`.
+  - Customize event logging by overriding helper functions.
+  - See https://google.github.io/adk-docs/Agents/Workflow-agents for design rationale.
   """
   use GenServer
   alias Adk.Memory
@@ -44,6 +51,16 @@ defmodule Adk.Agents.Sequential do
   @impl Adk.Agent
   def run(agent, input), do: Adk.Agent.run(agent, input)
 
+  @impl Adk.Agent
+  def handle_request(_input, state), do: {:ok, %{output: "Not implemented"}, state}
+
+  @doc """
+  Starts a Sequential agent with the given configuration.
+  """
+  def start_link(config_map, opts \\ []) when is_map(config_map) do
+    GenServer.start_link(__MODULE__, config_map, opts)
+  end
+
   # --- GenServer Callbacks ---
 
   @impl GenServer
@@ -59,8 +76,6 @@ defmodule Adk.Agents.Sequential do
   end
 
   @impl GenServer
-  @spec handle_call({:run, any()}, any(), State.t()) ::
-          {:reply, {:ok, map()} | {:error, term()}, State.t()}
   def handle_call({:run, input}, _from, %State{} = state) do
     invocation_id = UUID.uuid4()
 
@@ -92,6 +107,11 @@ defmodule Adk.Agents.Sequential do
         error_tuple = {:error, {:memory_error, :add_message_failed, {:user_input, reason}}}
         {:reply, error_tuple, state}
     end
+  end
+
+  @impl GenServer
+  def handle_call(:get_state, _from, %State{} = state) do
+    {:reply, {:ok, state}, state}
   end
 
   # --- Private Functions ---
@@ -140,7 +160,6 @@ defmodule Adk.Agents.Sequential do
   end
 
   # Step Execution Logic
-  @spec run_steps(any(), State.t(), String.t()) :: {:ok, map()} | {:error, term()}
   defp run_steps(initial_input, %State{} = state, invocation_id) do
     # The accumulator holds {:ok | :error, latest_output}
     initial_acc = {:ok, initial_input}
@@ -166,7 +185,6 @@ defmodule Adk.Agents.Sequential do
   end
 
   # Execute a single step based on its type
-  @spec execute_step(map(), any(), State.t(), String.t()) :: {:ok, any()} | {:error, term()}
   defp execute_step(
          %{type: "tool", tool: tool_name_str, params: params},
          # Tool steps often ignore direct input, relying on params or memory
@@ -268,7 +286,6 @@ defmodule Adk.Agents.Sequential do
 
   # --- Helper Functions for Logging Events ---
 
-  @spec log_tool_result_event(State.t(), String.t(), map()) :: :ok | :error
   defp log_tool_result_event(state, invocation_id, tool_result_map) do
     event_opts = [
       author: :tool,
@@ -292,8 +309,6 @@ defmodule Adk.Agents.Sequential do
     end
   end
 
-  @spec log_agent_step_event(State.t(), String.t(), map(), any(), any(), :ok | :error) ::
-          :ok | :error
   defp log_agent_step_event(
          state,
          invocation_id,
@@ -330,15 +345,5 @@ defmodule Adk.Agents.Sequential do
 
         :error
     end
-  end
-
-  # --- Start Link ---
-
-  def start_link({config_map, opts}) when is_map(config_map) and is_list(opts) do
-    GenServer.start_link(__MODULE__, config_map, opts)
-  end
-
-  def start_link(config_map) when is_map(config_map) do
-    GenServer.start_link(__MODULE__, config_map, [])
   end
 end

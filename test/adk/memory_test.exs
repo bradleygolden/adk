@@ -189,4 +189,103 @@ defmodule Adk.MemoryTest do
     # Check for string representation "user", not atom ":user"
     assert String.contains?(get_result, "Author: user")
   end
+
+  describe "macro contract" do
+    defmodule StubMemory do
+      use Adk.Memory
+    end
+
+    test "add_session/2 stub returns error tuple" do
+      assert {:error, {:not_implemented, :add_session}} = StubMemory.add_session("foo", %{})
+    end
+
+    test "add_message/2 stub returns error tuple" do
+      assert {:error, {:not_implemented, :add_message}} = StubMemory.add_message("foo", %{})
+    end
+
+    test "get_history/1 stub returns error tuple" do
+      assert {:error, {:not_implemented, :get_history}} = StubMemory.get_history("foo")
+    end
+
+    test "update_state/3 stub returns error tuple" do
+      assert {:error, {:not_implemented, :update_state}} = StubMemory.update_state("foo", :bar, 1)
+    end
+
+    test "get_state/2 stub returns error tuple" do
+      assert {:error, {:not_implemented, :get_state}} = StubMemory.get_state("foo", :bar)
+    end
+
+    test "get_full_state/1 stub returns error tuple" do
+      assert {:error, {:not_implemented, :get_full_state}} = StubMemory.get_full_state("foo")
+    end
+
+    test "search/2 stub returns error tuple" do
+      assert {:error, {:not_implemented, :search}} = StubMemory.search("foo", :bar)
+    end
+
+    test "get_sessions/1 stub returns error tuple" do
+      assert {:error, {:not_implemented, :get_sessions}} = StubMemory.get_sessions("foo")
+    end
+
+    test "clear_sessions/1 stub returns error tuple" do
+      assert {:error, {:not_implemented, :clear_sessions}} = StubMemory.clear_sessions("foo")
+    end
+
+    test "get_service_module/1 returns error tuple for unknown service" do
+      assert {:error, {:unknown_memory_service, :unknown}} =
+               Adk.Memory.get_service_module(:unknown)
+    end
+  end
+
+  describe "default backend resolution" do
+    setup do
+      # Save the original config and set the backend to :in_memory for these tests
+      original = Application.get_env(:adk, :memory_backend)
+      Application.put_env(:adk, :memory_backend, :in_memory)
+
+      on_exit(fn ->
+        if original do
+          Application.put_env(:adk, :memory_backend, original)
+        else
+          Application.delete_env(:adk, :memory_backend)
+        end
+      end)
+
+      :ok
+    end
+
+    test "update_state/get_state/get_full_state without backend argument" do
+      session_id = "default-backend-state-#{:rand.uniform(1000)}"
+      key = :foo
+      value = "bar"
+      assert :ok = Adk.Memory.update_state(session_id, key, value)
+      assert {:ok, ^value} = Adk.Memory.get_state(session_id, key)
+      assert {:ok, state} = Adk.Memory.get_full_state(session_id)
+      assert state == %{foo: value}
+    end
+
+    test "add_message/get_history without backend argument" do
+      session_id = "default-backend-history-#{:rand.uniform(1000)}"
+      opts = %{author: :user, content: "msg"}
+      assert :ok = Adk.Memory.add_message(session_id, opts)
+      assert {:ok, [event]} = Adk.Memory.get_history(session_id)
+      assert event.author == :user
+      assert event.content == "msg"
+    end
+
+    test "search without backend argument" do
+      session_id = "default-backend-search-#{:rand.uniform(1000)}"
+      :ok = Adk.Memory.add_message(session_id, %{author: :user, content: "find me"})
+      {:ok, results} = Adk.Memory.search(session_id, "find me")
+      assert length(results) == 1
+      assert hd(results).content == "find me"
+    end
+
+    test "clear_sessions without backend argument" do
+      session_id = "default-backend-clear-#{:rand.uniform(1000)}"
+      :ok = Adk.Memory.update_state(session_id, :foo, "bar")
+      :ok = Adk.Memory.clear_sessions(session_id)
+      assert {:error, {:session_not_found, ^session_id}} = Adk.Memory.get_state(session_id, :foo)
+    end
+  end
 end

@@ -1,6 +1,15 @@
 defmodule Adk.Agent do
   @moduledoc """
-  Behavior and utilities for implementing agents in the ADK framework.
+  Behavior and utilities for implementing agents in the Adk framework.
+
+  ## Extension Points
+
+  - Implement the `run/2` callback for agent execution logic.
+  - Optionally implement `handle_request/2` for custom request handling and decision routing.
+  - Override `init/1` or `__initialize__/1` for custom initialization logic.
+  - Override `handle_call/3` for advanced GenServer message handling.
+
+  This module provides a clear separation between orchestration (agent lifecycle, state management) and LLM/tool invocation logic, which should be implemented in agent modules or delegated to other components.
   """
 
   @doc """
@@ -8,6 +17,12 @@ defmodule Adk.Agent do
   """
   @callback run(agent :: pid(), input :: any()) ::
               {:ok, map()} | {:error, {:run_failed, reason :: term()}}
+
+  @doc """
+  Handle a request and return a response. Override in custom agents for decision routing or workflow logic.
+  """
+  @callback handle_request(input :: any(), state :: any()) ::
+              {:ok, map(), new_state :: any()} | {:error, reason :: term(), new_state :: any()}
 
   # We don't need this callback anymore as we use __initialize__ internally
 
@@ -51,6 +66,12 @@ defmodule Adk.Agent do
       @impl Adk.Agent
       def run(agent, input), do: Adk.Agent.run(agent, input)
 
+      # Default handle_request/2, can be overridden in custom agents
+      @impl Adk.Agent
+      def handle_request(input, state) do
+        {:ok, %{output: "Agent handle_request not implemented"}, state}
+      end
+
       # GenServer implementation
       @impl GenServer
       def init(config) do
@@ -67,8 +88,11 @@ defmodule Adk.Agent do
 
       @impl GenServer
       def handle_call({:run, input}, _from, state) do
-        # This would be overridden by the actual agent implementation
-        {:reply, {:ok, %{output: "Agent not implemented"}}, state}
+        # Delegate to handle_request/2 for custom agent logic
+        case handle_request(input, state) do
+          {:ok, response, new_state} -> {:reply, {:ok, response}, new_state}
+          {:error, reason, new_state} -> {:reply, {:error, {:run_failed, reason}}, new_state}
+        end
       end
 
       @impl GenServer
@@ -77,7 +101,7 @@ defmodule Adk.Agent do
       end
 
       # Allow overriding default implementations
-      defoverridable init: 1, run: 2, handle_call: 3
+      defoverridable init: 1, run: 2, handle_call: 3, handle_request: 2
     end
   end
 end

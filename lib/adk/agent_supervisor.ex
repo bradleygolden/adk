@@ -1,14 +1,24 @@
 defmodule Adk.AgentSupervisor do
   @moduledoc """
-  Supervisor for managing agent processes.
+  DynamicSupervisor for managing agent processes in the ADK system.
+
+  This supervisor is responsible for starting, supervising, and terminating agent processes dynamically at runtime. It uses a `:one_for_one` strategy, so if an agent process crashes, only that process is restarted.
+
+  Agents can be registered with unique names via the `Adk.AgentRegistry`, allowing for lookup and communication by name.
   """
   use DynamicSupervisor
 
+  @doc """
+  Starts the AgentSupervisor process and links it to the current process.
+  """
   def start_link(init_arg) do
     DynamicSupervisor.start_link(__MODULE__, init_arg, name: __MODULE__)
   end
 
   @impl true
+  @doc """
+  Initializes the DynamicSupervisor with a :one_for_one strategy.
+  """
   def init(_init_arg) do
     DynamicSupervisor.init(strategy: :one_for_one)
   end
@@ -25,21 +35,29 @@ defmodule Adk.AgentSupervisor do
     * `{:error, reason}` - Error information if the agent couldn't be started
   """
   def start_agent(agent_type, config) do
-    # Get the appropriate module based on agent type
     agent_module = get_agent_module(agent_type)
-
-    # Set the agent name if provided
     registry_name = Map.get(config, :name)
 
-    # Define the child spec for the agent
+    # Define a full child spec map for DynamicSupervisor
     child_spec =
       if registry_name do
-        {agent_module, {config, [name: {:via, Registry, {Adk.AgentRegistry, registry_name}}]}}
+        %{
+          id: registry_name,
+          start:
+            {agent_module, :start_link,
+             [config, [name: {:via, Registry, {Adk.AgentRegistry, registry_name}}]]},
+          restart: :permanent,
+          type: :worker
+        }
       else
-        {agent_module, config}
+        %{
+          id: agent_module,
+          start: {agent_module, :start_link, [config]},
+          restart: :permanent,
+          type: :worker
+        }
       end
 
-    # Start the agent under the supervisor
     DynamicSupervisor.start_child(__MODULE__, child_spec)
   end
 
@@ -48,14 +66,31 @@ defmodule Adk.AgentSupervisor do
   """
   def get_agent_module(agent_type) do
     case agent_type do
-      :sequential -> Adk.Agents.Sequential
-      :parallel -> Adk.Agents.Parallel
-      :loop -> Adk.Agents.Loop
-      :llm -> Adk.Agents.LLM
-      :langchain -> Adk.Agents.Langchain
+      :sequential ->
+        Adk.Agents.Sequential
+
+      :parallel ->
+        Adk.Agents.Parallel
+
+      :loop ->
+        Adk.Agents.Loop
+
+      :llm ->
+        Adk.Agents.LLM
+
+      :langchain ->
+        Adk.Agents.Langchain
+
       # Allow custom agent modules
-      module when is_atom(module) -> module
-      _ -> raise ArgumentError, "Unknown agent type: #{inspect(agent_type)}"
+      module when is_atom(module) ->
+        if Code.ensure_loaded?(module) do
+          module
+        else
+          {:error, {:agent_module_not_loaded, module}}
+        end
+
+      _ ->
+        {:error, {:unknown_agent_type, agent_type}}
     end
   end
 end

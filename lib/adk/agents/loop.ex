@@ -1,6 +1,13 @@
 defmodule Adk.Agents.Loop do
   @moduledoc """
-  A loop agent that executes steps repeatedly until a condition is met or max iterations are reached.
+  Implements a loop workflow agent per the Adk pattern.
+
+  This agent executes a series of steps repeatedly until a condition is met or a maximum number of iterations is reached. Steps and the loop condition are defined in the agent's configuration. Supports logging, memory integration, and error propagation. Implements the `Adk.Agent` behaviour.
+
+  Extension points:
+  - Add new step types by extending `execute_step/5`.
+  - Customize event logging by overriding helper functions.
+  - See https://google.github.io/adk-docs/Agents/Workflow-agents for design rationale.
   """
   use GenServer
   alias Adk.Memory
@@ -46,6 +53,9 @@ defmodule Adk.Agents.Loop do
   @impl Adk.Agent
   def run(agent, input), do: Adk.Agent.run(agent, input)
 
+  @impl Adk.Agent
+  def handle_request(_input, state), do: {:ok, %{output: "Not implemented"}, state}
+
   # --- GenServer Callbacks ---
 
   @impl GenServer
@@ -61,8 +71,6 @@ defmodule Adk.Agents.Loop do
   end
 
   @impl GenServer
-  @spec handle_call({:run, any()}, any(), State.t()) ::
-          {:reply, {:ok, map()} | {:error, term()}, State.t()}
   def handle_call({:run, input}, _from, %State{} = state) do
     invocation_id = UUID.uuid4()
 
@@ -94,6 +102,11 @@ defmodule Adk.Agents.Loop do
         error_tuple = {:error, {:memory_error, :add_message_failed, {:user_input, reason}}}
         {:reply, error_tuple, state}
     end
+  end
+
+  @impl GenServer
+  def handle_call(:get_state, _from, %State{} = state) do
+    {:reply, {:ok, state}, state}
   end
 
   # --- Private Functions ---
@@ -156,15 +169,11 @@ defmodule Adk.Agents.Loop do
   defp validate_max_iterations(_iter), do: :ok
 
   # Loop Execution Logic
-  @spec run_loop(any(), State.t(), String.t()) ::
-          {:ok, any()} | {:error, term()} | {:max_iterations_reached, any()}
   defp run_loop(initial_input, %State{} = state, invocation_id) do
     iterate(initial_input, 0, state, invocation_id)
   end
 
   # Recursive Iteration Function
-  @spec iterate(any(), non_neg_integer(), State.t(), String.t()) ::
-          {:ok, any()} | {:error, term()} | {:max_iterations_reached, any()}
   defp iterate(current_output, current_iteration, %State{} = state, invocation_id) do
     # Log start of iteration
     log_agent_loop_event(state, invocation_id, :iteration_start, %{
@@ -191,8 +200,6 @@ defmodule Adk.Agents.Loop do
   end
 
   # Helper to check condition and continue iteration
-  @spec check_condition_and_proceed(any(), non_neg_integer(), State.t(), String.t()) ::
-          {:ok, any()} | {:error, term()} | {:max_iterations_reached, any()}
   defp check_condition_and_proceed(
          current_output,
          current_iteration,
@@ -255,8 +262,6 @@ defmodule Adk.Agents.Loop do
   end
 
   # Helper to run steps for one iteration and recurse
-  @spec run_steps_and_iterate(any(), non_neg_integer(), State.t(), String.t()) ::
-          {:ok, any()} | {:error, term()} | {:max_iterations_reached, any()}
   defp run_steps_and_iterate(current_output, current_iteration, %State{} = state, invocation_id) do
     case run_steps_for_iteration(current_output, state, invocation_id, current_iteration) do
       {:ok, new_output} ->
@@ -271,8 +276,6 @@ defmodule Adk.Agents.Loop do
   end
 
   # Run all steps for a single iteration
-  @spec run_steps_for_iteration(any(), State.t(), String.t(), non_neg_integer()) ::
-          {:ok, any()} | {:error, term()}
   defp run_steps_for_iteration(input, %State{} = state, invocation_id, current_iteration) do
     # Accumulator holds {:ok | :error, latest_output}
     initial_acc = {:ok, input}
@@ -293,8 +296,6 @@ defmodule Adk.Agents.Loop do
   end
 
   # Execute a single step (similar to Sequential Agent, but uses Loop's State)
-  @spec execute_step(map(), any(), State.t(), String.t(), non_neg_integer()) ::
-          {:ok, any()} | {:error, term()}
   defp execute_step(
          %{type: "tool", tool: tool_name_str, params: params} = _step_config,
          # Tool steps often ignore direct input
@@ -452,7 +453,6 @@ defmodule Adk.Agents.Loop do
 
   # --- Helper Functions for Logging Events ---
 
-  @spec log_tool_result_event(State.t(), String.t(), map()) :: :ok | :error
   defp log_tool_result_event(state, invocation_id, tool_result_map) do
     event_opts = [
       author: :tool,
@@ -476,15 +476,6 @@ defmodule Adk.Agents.Loop do
     end
   end
 
-  @spec log_agent_step_event(
-          State.t(),
-          String.t(),
-          non_neg_integer(),
-          map(),
-          any(),
-          any(),
-          :ok | :error
-        ) :: :ok | :error
   defp log_agent_step_event(
          state,
          invocation_id,
@@ -526,7 +517,6 @@ defmodule Adk.Agents.Loop do
     end
   end
 
-  @spec log_agent_loop_event(State.t(), String.t(), atom(), map()) :: :ok | :error
   defp log_agent_loop_event(state, invocation_id, event_type, details) do
     content = Map.merge(%{event: event_type}, details)
 
@@ -553,11 +543,7 @@ defmodule Adk.Agents.Loop do
 
   # --- Start Link ---
 
-  def start_link({config_map, opts}) when is_map(config_map) and is_list(opts) do
+  def start_link(config_map, opts \\ []) when is_map(config_map) do
     GenServer.start_link(__MODULE__, config_map, opts)
-  end
-
-  def start_link(config_map) when is_map(config_map) do
-    GenServer.start_link(__MODULE__, config_map, [])
   end
 end

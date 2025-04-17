@@ -1,19 +1,19 @@
-defmodule Adk.Agents.Langchain.DefaultPromptBuilder do
+defmodule Adk.Agents.Langchain.JsonPromptBuilder do
   @moduledoc """
-  Default prompt builder for the Langchain agent.
+  A prompt builder that automatically adds JSON output requirements to system prompts.
 
-  This module handles building messages for the LLM, including adding JSON formatting
-  instructions when an output schema is specified.
+  This builder enhances system prompts with explicit instructions for LLMs to format
+  their responses as JSON objects that match the expected output schema.
   """
 
   alias Adk.Agents.Langchain.State
   alias Adk.PromptTemplate
 
   @doc """
-  Builds the messages to be sent to the LLM, with optional JSON formatting instructions.
+  Builds the messages to be sent to the LLM, with JSON formatting instructions.
 
   This function enhances the system prompt with instructions to format output as JSON
-  according to the provided output schema if one is specified.
+  according to the provided output schema.
 
   ## Parameters
     * `state` - The agent state containing configuration and history
@@ -28,8 +28,8 @@ defmodule Adk.Agents.Langchain.DefaultPromptBuilder do
 
     # If there's an output schema, enhance the system prompt with JSON formatting instructions
     enhanced_system_prompt =
-      if schema_module = state.config.output_schema do
-        PromptTemplate.with_json_output(system_prompt, schema_module)
+      if state.config.output_schema do
+        PromptTemplate.with_json_output(system_prompt, state.config.output_schema)
       else
         system_prompt
       end

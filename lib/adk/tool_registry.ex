@@ -1,40 +1,43 @@
 defmodule Adk.ToolRegistry do
   @moduledoc """
-  Registry for managing available tools in the ADK framework.
+  Registry for managing available tools in the Adk framework.
   """
 
   # Note: This module assumes Adk.ToolRegistry.Registry is started elsewhere (e.g., Application Supervisor)
   # It acts as a direct API wrapper around Registry functions.
 
-  @registry_name Adk.ToolRegistry.Registry
+  @table :adk_tool_registry
+
+  # Ensure ETS table for tool registry exists; safe to call concurrently
+  defp ensure_table do
+    try do
+      :ets.new(@table, [
+        :named_table,
+        :public,
+        :set,
+        read_concurrency: true,
+        write_concurrency: true
+      ])
+    rescue
+      ArgumentError -> :ok
+    end
+  end
 
   @doc """
   Register a new tool module.
 
   The module must implement the `Adk.Tool` behaviour.
   """
-  def register(tool_module) do
-    if implements_tool_behavior?(tool_module) do
-      try do
-        definition = tool_module.definition()
-        tool_name = definition.name |> String.to_atom()
+  def register(tool_name, tool_module) do
+    ensure_table()
 
-        case Registry.register(@registry_name, tool_name, tool_module) do
-          {:ok, _pid} ->
-            :ok
-
-          # Treat re-registration as success, maybe log a warning?
-          {:error, {:already_registered, _pid}} ->
-            # Logger.warning("Tool #{tool_name} already registered.")
-            :ok
-        end
-      rescue
-        e ->
-          # Catch potential errors during definition() call or atom conversion
-          {:error, {:registration_failed, :definition_error, tool_module, e}}
+    with true <- implements_tool_behavior?(tool_module) do
+      case :ets.insert_new(@table, {tool_name, tool_module}) do
+        true -> :ok
+        false -> {:error, :already_registered}
       end
     else
-      {:error, {:invalid_tool_module, tool_module}}
+      false -> {:error, :not_a_tool_module}
     end
   end
 
@@ -46,8 +49,7 @@ defmodule Adk.ToolRegistry do
   end
 
   def unregister(tool_name) when is_atom(tool_name) do
-    Registry.unregister(@registry_name, tool_name)
-    # Unregister doesn't return error if key doesn't exist
+    :ets.delete(@table, tool_name)
     :ok
   end
 
@@ -61,9 +63,12 @@ defmodule Adk.ToolRegistry do
   end
 
   def lookup(tool_name) when is_atom(tool_name) do
-    case Registry.lookup(@registry_name, tool_name) do
-      [{_pid, tool_module}] -> {:ok, tool_module}
-      [] -> {:error, {:tool_not_found, tool_name}}
+    case :ets.lookup(@table, tool_name) do
+      [{^tool_name, tool_module}] ->
+        {:ok, tool_module}
+
+      [] ->
+        {:error, {:tool_not_found, tool_name}}
     end
   end
 
@@ -71,9 +76,8 @@ defmodule Adk.ToolRegistry do
   List all registered tool modules.
   """
   def list do
-    # Match spec to retrieve only the values (tool modules) from the registry
-    match_spec = [{{:"$1", :"$2", :"$3"}, [], [:"$3"]}]
-    Registry.select(@registry_name, match_spec)
+    :ets.tab2list(@table)
+    |> Enum.map(fn {_key, mod} -> mod end)
   end
 
   @doc """
@@ -92,8 +96,6 @@ defmodule Adk.ToolRegistry do
       The `reason` will be a descriptive tuple, e.g., `{:tool_not_found, tool_name}` or
       `{:tool_execution_failed, tool_name, execution_reason}`.
   """
-  @spec execute_tool(tool_name :: atom() | String.t(), params :: map(), context :: map()) ::
-          {:ok, any()} | {:error, term()}
   def execute_tool(tool_name, params, context) when is_binary(tool_name) do
     execute_tool(String.to_atom(tool_name), params, context)
   end

@@ -16,7 +16,7 @@ defmodule Adk.Test.MockLLMStateAgent do
   @doc """
   Sets the expected response content.
   """
-  def set_response(response) when is_binary(response) do
+  def set_response(response) do
     Agent.update(__MODULE__, fn _state -> response end)
   end
 

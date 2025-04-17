@@ -11,7 +11,11 @@ defmodule Adk.Test.MockLLMProvider do
   def chat(_messages, _opts) do
     # Get response from the state agent, default if nil
     content = Adk.Test.MockLLMStateAgent.get_response() || "Default mock response"
-    {:ok, %{content: content, tool_calls: nil}}
+
+    case content do
+      {:error, reason} -> {:error, reason}
+      _ -> {:ok, %{content: content, tool_calls: nil}}
+    end
   end
 
   # Implement required callbacks

@@ -1,10 +1,13 @@
 defmodule Adk.Agents.Langchain do
   @moduledoc """
-  An agent that uses LangChain Elixir for reasoning and tool handling.
+  Implements a LangChain-driven workflow agent per the Adk pattern.
 
-  This agent integrates with the LangChain Elixir library, using the
-  `Adk.LLM.Providers.Langchain` provider under the hood. It supports
-  ADK tools, schemas, and memory integration.
+  This agent integrates with the LangChain Elixir library, using the `Adk.LLM.Providers.Langchain` provider. It supports Adk tools, schemas, and memory integration. Implements the `Adk.Agent` behaviour.
+
+  Extension points:
+  - Add new tool call or message handling logic by extending `handle_tool_calls/3` or `handle_direct_response/2`.
+  - Customize prompt building by providing a custom prompt builder module.
+  - See https://google.github.io/adk-docs/Agents/Workflow-agents for design rationale.
   """
   use GenServer
   alias Adk.Memory
@@ -13,9 +16,7 @@ defmodule Adk.Agents.Langchain do
   @behaviour Adk.Agent
 
   alias Adk.{
-    LLM,
-    # Use default for now
-    Agents.Llm.DefaultPromptBuilder
+    LLM
   }
 
   # --- Structs (Mirrors LLM Agent) ---
@@ -68,6 +69,9 @@ defmodule Adk.Agents.Langchain do
   @impl Adk.Agent
   def run(agent, input), do: Adk.Agent.run(agent, input)
 
+  @impl Adk.Agent
+  def handle_request(_input, state), do: {:ok, %{output: "Not implemented"}, state}
+
   # --- GenServer Callbacks ---
 
   @impl GenServer
@@ -85,8 +89,6 @@ defmodule Adk.Agents.Langchain do
   end
 
   @impl GenServer
-  @spec handle_call({:run, any()}, any(), State.t()) ::
-          {:reply, {:ok, map()} | {:error, term()}, State.t()}
   def handle_call({:run, input}, _from, %State{} = state) do
     session_id = state.current_session_id || "session_#{System.unique_integer([:positive])}"
     state = Map.put(state, :current_session_id, session_id)
@@ -334,12 +336,17 @@ defmodule Adk.Agents.Langchain do
     Logger.debug("[Agent #{state.config.name}] Calling Langchain provider...")
 
     # Prepare options for the Langchain provider call
-    # The provider will fetch tool definitions based on names in config.tools
     llm_options = state.config.llm_options
 
-    # Call the Langchain provider via Adk.LLM facade
-    # Pass the tool names from the config
-    case LLM.chat(:langchain, messages, Map.put(llm_options, :tools, state.config.tools)) do
+    # Determine provider: prefer llm_options[:provider] if present, else fallback to state.config.llm_provider
+    provider =
+      case Map.get(llm_options, :provider) do
+        nil -> Map.get(state.config, :llm_provider, :langchain)
+        val -> val
+      end
+
+    # Call the provider via Adk.LLM facade
+    case LLM.chat(provider, messages, Map.put(llm_options, :tools, state.config.tools)) do
       {:ok, %{content: content, tool_calls: tool_calls}} ->
         Logger.debug(
           "[Agent #{state.config.name}] Langchain response. Content: #{inspect(content)}, Tools: #{inspect(tool_calls)}"
@@ -378,8 +385,10 @@ defmodule Adk.Agents.Langchain do
         # Ensure correct structure before accessing keys
         id = Map.get(tool_call, "id")
         function_map = Map.get(tool_call, "function")
-        name = Map.get(function_map, "name")
-        args_json = Map.get(function_map, "arguments")
+
+        # Safely extract name and arguments, handling nil
+        name = if function_map, do: Map.get(function_map, "name"), else: nil
+        args_json = if function_map, do: Map.get(function_map, "arguments"), else: nil
 
         if id && name && args_json do
           case JSON.decode(args_json) do
@@ -456,40 +465,32 @@ defmodule Adk.Agents.Langchain do
         {:ok, %{content: content, tool_calls: nil}}
 
       schema_module ->
-        # Attempt to parse and validate against output schema
-        try do
-          decoded_map = JSON.decode!(content)
-          # Convert string keys to atoms
-          decoded_map_with_atoms =
-            for {key, val} <- decoded_map, into: %{}, do: {String.to_existing_atom(key), val}
+        # Use our JsonProcessor to handle JSON parsing, extraction, and validation
+        case Adk.JsonProcessor.process_json(content, schema_module) do
+          {:ok, valid_struct} ->
+            # Return validated struct
+            {:ok, %{content: valid_struct, tool_calls: nil}}
 
-          case struct!(schema_module, decoded_map_with_atoms) do
-            %_{} = valid_struct ->
-              # Return validated struct
-              {:ok, %{content: valid_struct, tool_calls: nil}}
-
-            _ ->
-              Logger.error(
-                "[Agent #{state.config.name}] Output failed schema validation: #{inspect(schema_module)}, Content: #{content}"
-              )
-
-              {:error, {:schema_validation_failed, :output, content, schema_module}}
-          end
-        rescue
-          JSON.DecodeError ->
+          {:error, {:invalid_json, _}} ->
             Logger.error(
               "[Agent #{state.config.name}] Output is not valid JSON for schema: #{inspect(schema_module)}, Content: #{content}"
             )
 
             {:error, {:invalid_json_output, content}}
 
-          # Catch struct creation errors
-          e ->
+          {:error, {:schema_validation_failed, module, data}} ->
             Logger.error(
-              "[Agent #{state.config.name}] Output failed schema validation during struct creation: #{inspect(schema_module)}, Content: #{content}, Error: #{inspect(e)}"
+              "[Agent #{state.config.name}] Output failed schema validation: #{inspect(module)}, Content: #{inspect(data)}"
             )
 
             {:error, {:schema_validation_failed, :output, content, schema_module}}
+
+          {:error, other_reason} ->
+            Logger.error(
+              "[Agent #{state.config.name}] Error processing JSON output: #{inspect(other_reason)}"
+            )
+
+            {:error, {:output_processing_failed, other_reason}}
         end
     end
   end
@@ -545,15 +546,8 @@ defmodule Adk.Agents.Langchain do
 
   # --- Start Link ---
 
-  # This function is called by DynamicSupervisor when using Adk.create_agent
-  # It receives the config map *and* GenServer options (like the name)
-  def start_link({config_map, opts}) when is_map(config_map) and is_list(opts) do
+  def start_link(config_map, opts \\ []) when is_map(config_map) do
     GenServer.start_link(__MODULE__, config_map, opts)
-  end
-
-  # Allow starting directly for testing or other purposes (without supervisor)
-  def start_link(config_map) when is_map(config_map) do
-    GenServer.start_link(__MODULE__, config_map, [])
   end
 
   # Remove old helper functions no longer used

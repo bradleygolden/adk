@@ -1,13 +1,13 @@
 defmodule Adk do
   @moduledoc """
-  ADK - Agent Development Kit for Elixir
+  Adk - Agent Development Kit for Elixir
 
   A framework for building, running, and managing intelligent agents in Elixir.
-  This module provides the primary API for interacting with the ADK framework.
+  This module provides the primary API for interacting with the Adk framework.
   """
 
   @doc """
-  Returns the current version of the ADK framework.
+  Returns the current version of the Adk framework.
   """
   def version, do: "0.1.0"
 
@@ -79,7 +79,16 @@ defmodule Adk do
       :ok
   """
   def register_tool(tool_module) do
-    Adk.ToolRegistry.register(tool_module)
+    # Register under the tool's definition name (as atom)
+    name =
+      case tool_module.definition() do
+        %{name: name} when is_binary(name) -> String.to_atom(name)
+        %{name: name} when is_atom(name) -> name
+        _ -> tool_module
+      end
+
+    Adk.ToolRegistry.register(name, tool_module)
+    :ok
   end
 
   @doc """

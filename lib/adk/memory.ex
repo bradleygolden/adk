@@ -1,9 +1,19 @@
 defmodule Adk.Memory do
   @moduledoc """
-  Behavior and utilities for implementing memory services in the ADK framework.
+  Behaviour and utilities for implementing memory services in the Adk framework.
 
-  Memory services provide a way for agents to store and retrieve information across
-  sessions or interactions.
+  ## Configuration
+
+      config :adk, :memory_backend, Adk.Memory.InMemory
+
+  By default, the in-memory backend is used. You can override this in your config.
+
+  ## Usage
+
+  You can call memory functions with or without specifying the backend. If omitted, the configured backend is used:
+
+      Adk.Memory.add_session("session_id", %{foo: :bar})
+      Adk.Memory.add_session(MyCustomBackend, "session_id", %{foo: :bar})
   """
 
   @doc """
@@ -114,117 +124,67 @@ defmodule Adk.Memory do
   @callback clear_sessions(session_id :: String.t()) ::
               :ok | {:error, {:session_clear_failed, reason :: term()}}
 
-  @doc """
-  Add a session to memory using the configured service.
+  # --- Public API with default backend resolution ---
 
-  ## Parameters
-    * `service` - The memory service module or name
-    * `session_id` - A unique identifier for the session
-    * `data` - The data to store for the session
-  """
-  def add_session(service, session_id, data) do
-    get_service_module(service).add_session(session_id, data)
+  def add_session(session_id, data), do: add_session(resolve_backend(), session_id, data)
+
+  def add_session(service, session_id, data),
+    do: get_service_module(service).add_session(session_id, data)
+
+  def add_message(session_id, opts), do: add_message(resolve_backend(), session_id, opts)
+
+  def add_message(service, session_id, opts),
+    do: get_service_module(service).add_message(session_id, opts)
+
+  def get_history(session_id), do: get_history(resolve_backend(), session_id)
+  def get_history(service, session_id), do: get_service_module(service).get_history(session_id)
+
+  def update_state(session_id, key, value),
+    do: update_state(resolve_backend(), session_id, key, value)
+
+  def update_state(service, session_id, key, value),
+    do: get_service_module(service).update_state(session_id, key, value)
+
+  def get_state(session_id, key), do: get_state(resolve_backend(), session_id, key)
+
+  def get_state(service, session_id, key),
+    do: get_service_module(service).get_state(session_id, key)
+
+  def get_full_state(session_id), do: get_full_state(resolve_backend(), session_id)
+
+  def get_full_state(service, session_id),
+    do: get_service_module(service).get_full_state(session_id)
+
+  def search(session_id, query), do: search(resolve_backend(), session_id, query)
+
+  def search(service, session_id, query),
+    do: get_service_module(service).search(session_id, query)
+
+  def get_sessions(session_id), do: get_sessions(resolve_backend(), session_id)
+  def get_sessions(service, session_id), do: get_service_module(service).get_sessions(session_id)
+
+  def clear_sessions(session_id), do: clear_sessions(resolve_backend(), session_id)
+
+  def clear_sessions(service, session_id),
+    do: get_service_module(service).clear_sessions(session_id)
+
+  # --- Backend resolution helpers ---
+
+  defp resolve_backend do
+    Application.get_env(:adk, :memory_backend, :in_memory)
   end
 
-  @doc """
-  Add an event to the history using the configured service.
+  @doc false
+  def get_service_module(service) when is_atom(service) do
+    cond do
+      service == :in_memory ->
+        Adk.Memory.InMemory
 
-  ## Parameters
-    * `service` - The memory service module or name.
-    * `session_id` - A unique identifier for the session.
-    * `opts` - Keyword list or map containing data for the `Adk.Event`. See the callback doc.
-  """
-  def add_message(service, session_id, opts) do
-    get_service_module(service).add_message(session_id, opts)
-  end
+      function_exported?(service, :add_session, 2) ->
+        service
 
-  @doc """
-  Get the full event history using the configured service.
-
-  ## Parameters
-    * `service` - The memory service module or name
-    * `session_id` - The session ID to get history for
-  """
-  def get_history(service, session_id) do
-    get_service_module(service).get_history(session_id)
-  end
-
-  @doc """
-  Update a specific key-value pair in the state map using the configured service.
-
-  ## Parameters
-    * `service` - The memory service module or name
-    * `session_id` - The session ID to update state for
-    * `key` - The key to update
-    * `value` - The new value
-  """
-  def update_state(service, session_id, key, value) do
-    get_service_module(service).update_state(session_id, key, value)
-  end
-
-  @doc """
-  Get the value of a specific key from the state map using the configured service.
-
-  ## Parameters
-    * `service` - The memory service module or name
-    * `session_id` - The session ID to get state from
-    * `key` - The key to retrieve
-  """
-  def get_state(service, session_id, key) do
-    get_service_module(service).get_state(session_id, key)
-  end
-
-  @doc """
-  Get the entire state map for a given session using the configured service.
-
-  ## Parameters
-    * `service` - The memory service module or name
-    * `session_id` - The session ID to get the full state for
-  """
-  def get_full_state(service, session_id) do
-    get_service_module(service).get_full_state(session_id)
-  end
-
-  @doc """
-  Search memory for sessions matching the query using the configured service.
-
-  ## Parameters
-    * `service` - The memory service module or name
-    * `session_id` - The session ID to search in (if applicable)
-    * `query` - The search query (can be string or structured data)
-  """
-  def search(service, session_id, query) do
-    get_service_module(service).search(session_id, query)
-  end
-
-  @doc """
-  Get all sessions for the given ID using the configured service.
-
-  ## Parameters
-    * `service` - The memory service module or name
-    * `session_id` - The session ID to get data for
-  """
-  def get_sessions(service, session_id) do
-    get_service_module(service).get_sessions(session_id)
-  end
-
-  @doc """
-  Clear all sessions for the given ID using the configured service.
-
-  ## Parameters
-    * `service` - The memory service module or name
-    * `session_id` - The session ID to clear data for
-  """
-  def clear_sessions(service, session_id) do
-    get_service_module(service).clear_sessions(session_id)
-  end
-
-  # Helper to get the memory service module
-  defp get_service_module(service) when is_atom(service) do
-    case service do
-      :in_memory -> Adk.Memory.InMemory
-      module when is_atom(module) -> module
-      _ -> raise ArgumentError, "Unknown memory service: #{inspect(service)}"
+      true ->
+        {:error, {:unknown_memory_service, service}}
     end
   end
 
@@ -237,49 +197,33 @@ defmodule Adk.Memory do
 
       # Default implementations that can be overridden
       @impl Adk.Memory
-      def add_session(session_id, data) do
-        raise "Not implemented: add_session/2"
-      end
+      def add_session(_session_id, _data), do: {:error, {:not_implemented, :add_session}}
 
       @impl Adk.Memory
-      def add_message(session_id, opts) do
-        raise "Not implemented: add_message/2 with opts: #{inspect(opts)} for session #{session_id}"
-      end
+      def add_message(_session_id, _opts),
+        do: {:error, {:not_implemented, :add_message}}
 
       @impl Adk.Memory
-      def get_history(session_id) do
-        raise "Not implemented: get_history/1 for session #{session_id}"
-      end
+      def get_history(_session_id),
+        do: {:error, {:not_implemented, :get_history}}
 
       @impl Adk.Memory
-      def update_state(session_id, key, value) do
-        raise "Not implemented: update_state/3"
-      end
+      def update_state(_session_id, _key, _value), do: {:error, {:not_implemented, :update_state}}
 
       @impl Adk.Memory
-      def get_state(session_id, key) do
-        raise "Not implemented: get_state/2"
-      end
+      def get_state(_session_id, _key), do: {:error, {:not_implemented, :get_state}}
 
       @impl Adk.Memory
-      def get_full_state(session_id) do
-        raise "Not implemented: get_full_state/1"
-      end
+      def get_full_state(_session_id), do: {:error, {:not_implemented, :get_full_state}}
 
       @impl Adk.Memory
-      def search(session_id, query) do
-        raise "Not implemented: search/2"
-      end
+      def search(_session_id, _query), do: {:error, {:not_implemented, :search}}
 
       @impl Adk.Memory
-      def get_sessions(session_id) do
-        raise "Not implemented: get_sessions/1"
-      end
+      def get_sessions(_session_id), do: {:error, {:not_implemented, :get_sessions}}
 
       @impl Adk.Memory
-      def clear_sessions(session_id) do
-        raise "Not implemented: clear_sessions/1"
-      end
+      def clear_sessions(_session_id), do: {:error, {:not_implemented, :clear_sessions}}
 
       # Allow overriding default implementations
       defoverridable add_session: 2,

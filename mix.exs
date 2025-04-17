@@ -35,7 +35,8 @@ defmodule Adk.MixProject do
       # Added UUID dependency
       {:uuid, "~> 1.1"},
       # Added mix_test_watch for development and testing
-      {:mix_test_watch, "~> 1.2", only: [:dev, :test], runtime: false}
+      {:mix_test_watch, "~> 1.2", only: [:dev, :test], runtime: false},
+      {:mox, "~> 1.0", only: :test}
     ]
   end
 
