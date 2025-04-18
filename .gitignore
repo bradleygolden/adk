@@ -23,3 +23,5 @@ adk-*.tar
 /tmp/
 
 .env
+.mcp.json
+/.roo/

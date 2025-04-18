@@ -1,10 +1,8 @@
 defmodule Adk.Event do
   @moduledoc """
-  Represents a single event or interaction within an Adk session.
+  Event system for ADK.
 
-  This struct aligns conceptually with event models used in similar frameworks,
-  capturing details about who initiated the event, its content, and any
-  associated tool interactions.
+  Provides a pub/sub mechanism for system events.
   """
 
   @typedoc """
@@ -79,6 +77,41 @@ defmodule Adk.Event do
 
   defp random_id do
     :crypto.strong_rand_bytes(16) |> Base.encode16(case: :lower)
+  end
+
+  @doc """
+  Subscribe to events.
+  """
+  def subscribe do
+    # Create a simple process dictionary based pub/sub
+    pid = self()
+    Process.put(:adk_event_subscriber, pid)
+    {:ok, pid}
+  end
+
+  @doc """
+  Unsubscribe from events.
+  """
+  def unsubscribe(pid) do
+    # Clean up subscriber
+    if Process.get(:adk_event_subscriber) == pid do
+      Process.delete(:adk_event_subscriber)
+    end
+
+    :ok
+  end
+
+  @doc """
+  Publish an event.
+  """
+  def publish(event) do
+    # Simple implementation that just sends events to the subscriber
+    # A real implementation would use Registry or PubSub
+    if subscriber = Process.get(:adk_event_subscriber) do
+      send(subscriber, {:adk_event, event})
+    end
+
+    :ok
   end
 
   @doc """

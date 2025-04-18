@@ -1,22 +1,30 @@
-defmodule Adk.AgentsTest.TestTool do
-  use Adk.Tool
+defmodule Adk.AgentTest.TestTool do
+  @behaviour Adk.Tool
 
   @impl true
   def definition do
     %{
       name: "test_tool",
-      description: "A test tool for testing",
+      description: "A tool for testing agent functionality",
       parameters: %{
-        input: %{
-          type: "string",
-          description: "The input to the tool"
-        }
+        type: "object",
+        properties: %{
+          test_input: %{
+            type: "string",
+            description: "Input for the test tool"
+          }
+        },
+        required: ["test_input"]
       }
     }
   end
 
-  @impl Adk.Tool
-  def execute(%{"input" => input}, _context) do
-    {:ok, "Processed: #{input}"}
+  @impl true
+  def execute(%{"test_input" => input}, _context) do
+    {:ok, "Processed #{input}"}
+  end
+
+  def execute(params, _context) do
+    {:error, "Invalid parameters: #{inspect(params)}"}
   end
 end

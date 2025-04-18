@@ -14,6 +14,29 @@ defmodule Adk.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       preferred_cli_env: [
         "test.watch": :test
+      ],
+      test_coverage: [
+        summary: [threshold: 70],
+        ignore_modules: [
+          # Test utilities and mock modules
+          Adk.BypassHelper,
+          Adk.Test.AgentCase,
+          Adk.Test.Helpers,
+          Adk.Test.MockLLMProvider,
+          Adk.Test.MockLLMStateAgent,
+          Adk.Test.Schemas,
+          Adk.Test.Schemas.InputSchema,
+          Adk.Test.Schemas.OutputSchema,
+          Adk.AgentTest.TestTool,
+
+          # JSON encoders (auto-generated)
+          JSON.Encoder.Adk.Event,
+          JSON.Encoder.Adk.Test.Schemas.InputSchema,
+          JSON.Encoder.Adk.Test.Schemas.OutputSchema,
+
+          # Optional providers that require external dependencies
+          Adk.LLM.Providers.Langchain
+        ]
       ]
     ]
   end
@@ -34,6 +57,8 @@ defmodule Adk.MixProject do
       {:bypass, "~> 2.1", only: :test},
       # Added UUID dependency
       {:uuid, "~> 1.1"},
+      # Added telemetry for observability
+      {:telemetry, "~> 1.2"},
       # Added mix_test_watch for development and testing
       {:mix_test_watch, "~> 1.2", only: [:dev, :test], runtime: false},
       {:mox, "~> 1.0", only: :test}

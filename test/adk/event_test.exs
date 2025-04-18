@@ -84,4 +84,64 @@ defmodule Adk.EventTest do
       assert event.payload == nil
     end
   end
+
+  describe "subscribe/unsubscribe/publish" do
+    test "can subscribe and receive events" do
+      # Subscribe to events
+      {:ok, pid} = Event.subscribe()
+      assert pid == self()
+
+      # Create and publish an event
+      event = Event.new(session_id: "test_session", author: :user, content: "test message")
+      Event.publish(event)
+
+      # Check that we received the event
+      assert_receive {:adk_event, received_event}
+      assert received_event.session_id == "test_session"
+      assert received_event.content == "test message"
+    end
+
+    test "unsubscribe stops receiving events" do
+      # Subscribe, then unsubscribe
+      {:ok, pid} = Event.subscribe()
+      :ok = Event.unsubscribe(pid)
+
+      # Publish an event
+      event = Event.new(session_id: "test_session", author: :user, content: "test message")
+      Event.publish(event)
+
+      # Should not receive the event
+      refute_receive {:adk_event, _}, 100
+    end
+
+    test "unsubscribe is idempotent" do
+      # Unsubscribe when not subscribed should be fine
+      :ok = Event.unsubscribe(self())
+
+      # Subscribe, unsubscribe multiple times
+      {:ok, _pid} = Event.subscribe()
+      :ok = Event.unsubscribe(self())
+      # Second unsubscribe should be a no-op
+      :ok = Event.unsubscribe(self())
+
+      # Publish an event
+      event = Event.new(session_id: "test_session", author: :user)
+      Event.publish(event)
+
+      # Should not receive the event
+      refute_receive {:adk_event, _}, 100
+    end
+
+    test "publish returns :ok when no subscribers" do
+      # Make sure we're not subscribed
+      Event.unsubscribe(self())
+
+      # Publish an event with no subscribers
+      event = Event.new(session_id: "test_session", author: :user)
+      result = Event.publish(event)
+
+      # Should return :ok
+      assert result == :ok
+    end
+  end
 end

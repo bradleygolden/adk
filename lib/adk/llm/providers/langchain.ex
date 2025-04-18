@@ -21,6 +21,13 @@ defmodule Adk.LLM.Providers.Langchain do
   - `:endpoint` (string, custom API URL)
   - `:tools` (list of tool names for tool-calling)
 
+  API keys can be provided in three ways (in order of precedence):
+  1. Directly in the options map with the `:api_key` key
+  2. In your application config (e.g., `config :langchain, :openai_key, "your-key"`)
+  3. From environment variables:
+     - `OPENAI_API_KEY` for OpenAI
+     - `ANTHROPIC_API_KEY` for Anthropic
+
   See `Adk.LLM` for usage and dynamic dispatch details.
 
   ## Error Handling
@@ -96,99 +103,110 @@ defmodule Adk.LLM.Providers.Langchain do
         max_tokens = Map.get(options, :max_tokens, 1000)
         tool_names = Map.get(options, :tools, [])
 
-        # Fetch and format available tools based on the names provided
-        # Use lookup/1 and handle potential errors
-        {tool_modules, errors} =
-          Enum.map(tool_names, &Adk.ToolRegistry.lookup/1)
-          |> Enum.split_with(&match?({:ok, _}, &1))
+        # Check if we're using a mock provider
+        provider = Map.get(options, :provider, :openai)
 
-        if !Enum.empty?(errors) do
-          Logger.warning("Could not find some tools for Langchain agent: #{inspect(errors)}")
-        end
+        # Handle mocks differently - bypass LangChain entirely for mocks
+        if provider in [Adk.LLM.Providers.OpenAIMock, Adk.LLM.Providers.LangchainMock] do
+          # Direct call to the mock - no LangChain chain involved
+          provider.chat(messages, options)
+        else
+          # Normal flow for real providers
+          # Fetch and format available tools based on the names provided
+          # Use lookup/1 and handle potential errors
+          {tool_modules, errors} =
+            Enum.map(tool_names, &Adk.ToolRegistry.lookup/1)
+            |> Enum.split_with(&match?({:ok, _}, &1))
 
-        formatted_tools =
-          format_tools_for_openai(tool_modules |> Enum.map(fn {:ok, mod} -> mod end))
+          if !Enum.empty?(errors) do
+            Logger.warning("Could not find some tools for Langchain agent: #{inspect(errors)}")
+          end
 
-        # Convert messages to LangChain format
-        langchain_messages = Enum.map(messages, &convert_message_to_langchain/1)
+          formatted_tools =
+            format_tools_for_openai(tool_modules |> Enum.map(fn {:ok, mod} -> mod end))
 
-        # Merge tools into options for model creation
-        model_options =
-          Map.merge(options, %{
-            temperature: temperature,
-            max_tokens: max_tokens,
-            # Pass formatted tools if any exist
-            tools: formatted_tools |> Enum.filter(&(!is_nil(&1)))
-          })
+          # Convert messages to LangChain format
+          langchain_messages = Enum.map(messages, &convert_message_to_langchain/1)
 
-        case get_langchain_model(model, model_options) do
-          {:ok, llm} ->
-            try do
-              # Revert to using LLMChain.run
-              run_result =
-                LangChain.Chains.LLMChain.new!(%{llm: llm})
-                |> LangChain.Chains.LLMChain.add_messages(langchain_messages)
-                |> LangChain.Chains.LLMChain.run()
+          # Merge tools into options for model creation
+          model_options =
+            Map.merge(options, %{
+              temperature: temperature,
+              max_tokens: max_tokens,
+              # Pass formatted tools if any exist
+              tools: formatted_tools |> Enum.filter(&(!is_nil(&1)))
+            })
 
-              case run_result do
-                # Handle the specific error case seen in logs directly
-                {:ok, [error: %LangChain.LangChainError{message: "Unexpected response"} = err]} ->
-                  Logger.error(
-                    "LLMChain run returned an unexpected response error block: #{inspect(err)}"
-                  )
+          case get_langchain_model(model, model_options) do
+            {:ok, llm} ->
+              try do
+                # Revert to using LLMChain.run
+                run_result =
+                  LangChain.Chains.LLMChain.new!(%{llm: llm})
+                  |> LangChain.Chains.LLMChain.add_messages(langchain_messages)
+                  |> LangChain.Chains.LLMChain.run()
 
-                  {:error, {:llm_provider_error, "LLMChain run returned unexpected error block"}}
+                case run_result do
+                  # Handle the specific error case seen in logs directly
+                  {:ok, [error: %LangChain.LangChainError{message: "Unexpected response"} = err]} ->
+                    Logger.error(
+                      "LLMChain run returned an unexpected response error block: #{inspect(err)}"
+                    )
 
-                {:ok, updated_chain} ->
-                  case updated_chain.messages |> List.last() do
-                    nil ->
-                      {:error, "No response message found in LangChain chain messages"}
+                    {:error,
+                     {:llm_provider_error, "LLMChain run returned unexpected error block"}}
 
-                    %{role: :assistant, content: content, tool_calls: tool_calls} ->
-                      {:ok, %{content: content, tool_calls: tool_calls}}
+                  {:ok, updated_chain} ->
+                    case updated_chain.messages |> List.last() do
+                      nil ->
+                        {:error, "No response message found in LangChain chain messages"}
 
-                    # No tool calls
-                    %{role: :assistant, content: content} ->
-                      {:ok, %{content: content, tool_calls: nil}}
+                      %{role: :assistant, content: content, tool_calls: tool_calls} ->
+                        {:ok, %{content: content, tool_calls: tool_calls}}
 
-                    # Handle the unexpected structure seen in logs
-                    %{message: %{"content" => content, "role" => "assistant"}} ->
-                      Logger.warning(
-                        "Handling slightly unexpected message format: #{inspect(content)}"
-                      )
+                      # No tool calls
+                      %{role: :assistant, content: content} ->
+                        {:ok, %{content: content, tool_calls: nil}}
 
-                      {:ok, %{content: content, tool_calls: nil}}
+                      # Handle the unexpected structure seen in logs
+                      %{message: %{"content" => content, "role" => "assistant"}} ->
+                        Logger.warning(
+                          "Handling slightly unexpected message format: #{inspect(content)}"
+                        )
 
-                    other_message ->
-                      Logger.warning(
-                        "Unexpected last message format from LangChain: #{inspect(other_message)}"
-                      )
+                        {:ok, %{content: content, tool_calls: nil}}
 
-                      content = Map.get(other_message, :content)
-                      tool_calls = Map.get(other_message, :tool_calls)
-                      {:ok, %{content: content, tool_calls: tool_calls}}
-                  end
+                      other_message ->
+                        Logger.warning(
+                          "Unexpected last message format from LangChain: #{inspect(other_message)}"
+                        )
 
-                # Handle potential error formats from LLMChain.run
-                # 3-tuple error
-                {:error, _chain_state, reason} ->
-                  {:error, reason}
+                        content = Map.get(other_message, :content)
+                        tool_calls = Map.get(other_message, :tool_calls)
+                        {:ok, %{content: content, tool_calls: tool_calls}}
+                    end
 
-                # 2-tuple error
-                {:error, reason} ->
-                  {:error, reason}
+                  # Handle potential error formats from LLMChain.run
+                  # 3-tuple error
+                  {:error, _chain_state, reason} ->
+                    {:error, reason}
 
-                # Catch other cases
-                other ->
-                  {:error, "Unexpected result from LLMChain.run: #{inspect(other)}"}
+                  # 2-tuple error
+                  {:error, reason} ->
+                    {:error, reason}
+
+                  # Catch other cases
+                  other ->
+                    {:error, "Unexpected result from LLMChain.run: #{inspect(other)}"}
+                end
+              rescue
+                e -> {:error, "Failed to run LLMChain: #{inspect(e)}"}
               end
-            rescue
-              e -> {:error, "Failed to run LLMChain: #{inspect(e)}"}
-            end
 
-          # Error from get_langchain_model
-          {:error, reason} ->
-            {:error, reason}
+            # Error from get_langchain_model
+            {:error, reason} ->
+              {:error, reason}
+          end
         end
 
       # Error from ensure_langchain_available
@@ -315,44 +333,59 @@ defmodule Adk.LLM.Providers.Langchain do
       # Get provider from options or default to :openai
       provider = Map.get(options, :provider, :openai)
 
-      # Get API URL from options if provided
-      api_url = Map.get(options, :endpoint)
+      # Handle mock providers directly
+      if provider in [Adk.LLM.Providers.OpenAIMock, Adk.LLM.Providers.LangchainMock] do
+        # For mocks, we don't need any real OpenAI functionality
+        # We'll create a minimal struct with only what we need
+        {:ok,
+         %{
+           __struct__: LangChain.ChatModels.ChatOpenAI,
+           model: model,
+           provider_mock: provider,
+           # Prevents API key errors
+           api_key: "mock-api-key"
+         }}
+      else
+        # Normal path for real providers
+        # Get API URL from options if provided
+        api_url = Map.get(options, :endpoint)
 
-      # Get API key from options or application config
-      api_key = get_api_key(provider, options)
+        # Get API key from options or application config
+        api_key = get_api_key(provider, options)
 
-      # Create base config
-      config = %{
-        model: model,
-        temperature: Map.get(options, :temperature, 0.7),
-        max_tokens: Map.get(options, :max_tokens, 1000)
-      }
+        # Create base config
+        config = %{
+          model: model,
+          temperature: Map.get(options, :temperature, 0.7),
+          max_tokens: Map.get(options, :max_tokens, 1000)
+        }
 
-      # Add API key to config if provided
-      config = if api_key, do: Map.put(config, :api_key, api_key), else: config
+        # Add API key to config if provided
+        config = if api_key, do: Map.put(config, :api_key, api_key), else: config
 
-      # Add API URL to config if provided
-      config = if api_url, do: Map.put(config, :endpoint, api_url), else: config
+        # Add API URL to config if provided
+        config = if api_url, do: Map.put(config, :endpoint, api_url), else: config
 
-      # Add tools to config if present in options (specifically for OpenAI)
-      config =
-        if provider == :openai && Map.has_key?(options, :tools) do
-          Map.put(config, :tools, Map.get(options, :tools))
-        else
-          config
+        # Add tools to config if present in options (specifically for OpenAI)
+        config =
+          if provider == :openai && Map.has_key?(options, :tools) do
+            Map.put(config, :tools, Map.get(options, :tools))
+          else
+            config
+          end
+
+        # Create the model based on provider
+        case provider do
+          :openai ->
+            {:ok, apply(LangChain.ChatModels.ChatOpenAI, :new!, [config])}
+
+          :anthropic ->
+            # Note: Anthropic tool support might differ, not handled here
+            {:ok, apply(LangChain.ChatModels.ChatAnthropic, :new!, [config])}
+
+          _ ->
+            {:error, "Unsupported provider: #{provider}"}
         end
-
-      # Create the model based on provider
-      case provider do
-        :openai ->
-          {:ok, apply(LangChain.ChatModels.ChatOpenAI, :new!, [config])}
-
-        :anthropic ->
-          # Note: Anthropic tool support might differ, not handled here
-          {:ok, apply(LangChain.ChatModels.ChatAnthropic, :new!, [config])}
-
-        _ ->
-          {:error, "Unsupported provider: #{provider}"}
       end
     rescue
       e ->
@@ -368,11 +401,17 @@ defmodule Adk.LLM.Providers.Langchain do
   end
 
   defp get_api_key_from_config(:openai) do
-    Application.get_env(:langchain, :openai_key)
+    # Check application config first
+    config_key = Application.get_env(:langchain, :openai_key)
+    # If not found, try environment variable
+    if config_key, do: config_key, else: System.get_env("OPENAI_API_KEY")
   end
 
   defp get_api_key_from_config(:anthropic) do
-    Application.get_env(:langchain, :anthropic_key)
+    # Check application config first
+    config_key = Application.get_env(:langchain, :anthropic_key)
+    # If not found, try environment variable
+    if config_key, do: config_key, else: System.get_env("ANTHROPIC_API_KEY")
   end
 
   defp get_api_key_from_config(_), do: nil

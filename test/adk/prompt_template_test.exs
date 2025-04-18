@@ -3,17 +3,34 @@ defmodule Adk.PromptTemplateTest do
 
   alias Adk.PromptTemplate
 
+  defmodule User do
+    defstruct [:name, :color]
+  end
+
   # Sample schema for testing
   defmodule TestSchema do
     @enforce_keys [:response]
     defstruct [:response, :details, is_complete: false, items: []]
   end
 
-  describe "format/2" do
-    test "is a passthrough and returns the template unchanged" do
-      template = "Hello, <%= @name %>!"
-      vars = %{name: "World"}
-      assert PromptTemplate.format(template, vars) == template
+  defmodule DescribedSchema do
+    @enforce_keys [:foo, :bar]
+    defstruct [:foo, :bar]
+    @field_descriptions %{foo: "Foo field description.", bar: "Bar field description."}
+    def field_descriptions, do: @field_descriptions
+  end
+
+  describe "render/2" do
+    test "renders template with map variables" do
+      template = "Hello, <%= @name %>! Your favorite color is <%= @color %>."
+      vars = %{name: "Alice", color: "blue"}
+      assert PromptTemplate.render(template, vars) == "Hello, Alice! Your favorite color is blue."
+    end
+
+    test "renders template with struct variables" do
+      template = "Hi, <%= @name %>! Your favorite color is <%= @color %>."
+      user = %User{name: "Bob", color: "green"}
+      assert PromptTemplate.render(template, user) == "Hi, Bob! Your favorite color is green."
     end
   end
 
@@ -64,6 +81,14 @@ defmodule Adk.PromptTemplateTest do
       assert String.contains?(formatted_prompt, "\"is_complete\": true")
       assert String.contains?(formatted_prompt, "item1")
       assert String.contains?(formatted_prompt, "item2")
+    end
+
+    test "includes field descriptions if provided by schema" do
+      base_prompt = "You are a helpful assistant."
+      formatted_prompt = PromptTemplate.with_json_output(base_prompt, DescribedSchema)
+      assert String.contains?(formatted_prompt, "Field Descriptions:")
+      assert String.contains?(formatted_prompt, "- `foo`: Foo field description.")
+      assert String.contains?(formatted_prompt, "- `bar`: Bar field description.")
     end
   end
 end

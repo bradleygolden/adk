@@ -9,5 +9,11 @@ defmodule Adk.Test.Schemas do
     @derive {JSON.Encoder, only: [:answer, :confidence]}
     @enforce_keys [:answer, :confidence]
     defstruct [:answer, :confidence]
+
+    @field_descriptions %{
+      answer: "A natural language answer to the user's question.",
+      confidence: "A float between 0 and 1 representing the model's confidence in the answer."
+    }
+    def field_descriptions, do: @field_descriptions
   end
 end

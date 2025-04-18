@@ -6,7 +6,7 @@ defmodule Adk.Application do
 
   - `Registry` (Adk.AgentRegistry): Tracks dynamically created agent processes by name.
   - `Adk.ToolRegistry.Server`: Owns the ETS table for tool registration and lookup.
-  - `Adk.AgentSupervisor`: Supervises agent processes (one_for_one strategy).
+  - `Adk.Agent.AgentSupervisor`: Supervises agent processes (one_for_one strategy).
   - `Adk.Memory.InMemory`: In-memory memory provider for agent state and event storage.
 
   ## Configuration Keys
@@ -26,13 +26,16 @@ defmodule Adk.Application do
 
   @impl true
   def start(_type, _args) do
+    # Initialize the callback registry
+    Adk.Callback.init()
+
     children = [
       # Registry for dynamically created agents
       {Registry, keys: :unique, name: Adk.AgentRegistry},
       # Tool registry ETS owner
       Adk.ToolRegistry.Server,
       # Supervisor for managing agent processes
-      Adk.AgentSupervisor,
+      Adk.Agent.AgentSupervisor,
       # In-memory memory service
       Adk.Memory.InMemory
     ]

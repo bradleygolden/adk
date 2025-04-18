@@ -9,6 +9,49 @@ defmodule Adk.JsonProcessorTest do
     defstruct [:response, :details, is_complete: false, items: []]
   end
 
+  describe "encode/1" do
+    test "encodes map to JSON string" do
+      map = %{name: "test", value: 123, list: [1, 2, 3]}
+      assert {:ok, json} = JsonProcessor.encode(map)
+      assert is_binary(json)
+      assert json =~ "\"name\":\"test\""
+      assert json =~ "\"value\":123"
+      assert json =~ "\"list\":[1,2,3]"
+    end
+
+    test "encodes list to JSON array string" do
+      list = [1, "two", %{three: 3}]
+      assert {:ok, json} = JsonProcessor.encode(list)
+      assert json =~ "[1,\"two\",{\"three\":3}]"
+    end
+
+    test "returns error for non-encodable terms" do
+      # Functions are not JSON-encodable
+      bad_term = %{func: fn -> :fail end}
+      assert {:error, _error} = JsonProcessor.encode(bad_term)
+    end
+  end
+
+  describe "decode/1" do
+    test "decodes valid JSON string to map" do
+      json = "{\"name\":\"test\",\"value\":123,\"list\":[1,2,3]}"
+      assert {:ok, decoded} = JsonProcessor.decode(json)
+      assert decoded["name"] == "test"
+      assert decoded["value"] == 123
+      assert decoded["list"] == [1, 2, 3]
+    end
+
+    test "decodes valid JSON array string to list" do
+      json = "[1,\"two\",{\"three\":3}]"
+      assert {:ok, decoded} = JsonProcessor.decode(json)
+      assert decoded == [1, "two", %{"three" => 3}]
+    end
+
+    test "returns error for invalid JSON" do
+      assert {:error, _error} = JsonProcessor.decode("{invalid json")
+    end
+  end
+
   describe "process_json/3" do
     test "processes valid JSON with no schema" do
       json =

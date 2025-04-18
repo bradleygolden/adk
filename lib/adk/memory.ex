@@ -170,7 +170,11 @@ defmodule Adk.Memory do
 
   # --- Backend resolution helpers ---
 
-  defp resolve_backend do
+  @doc """
+  Resolves the configured memory backend.
+  Returns the default backend if none is configured.
+  """
+  def resolve_backend do
     Application.get_env(:adk, :memory_backend, :in_memory)
   end
 

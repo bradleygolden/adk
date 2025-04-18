@@ -4,6 +4,15 @@ defmodule Adk do
 
   A framework for building, running, and managing intelligent agents in Elixir.
   This module provides the primary API for interacting with the Adk framework.
+
+  ## Core API
+
+  - Agent creation and orchestration (sequential, parallel, loop, LLM, LangChain)
+  - Tool registration and execution
+  - Memory/session management
+  - LLM provider integration (completion, chat)
+
+  See the project documentation for detailed guides and examples.
   """
 
   @doc """
@@ -16,48 +25,21 @@ defmodule Adk do
 
   ## Parameters
     * `agent_type` - The type of agent to create (e.g., :sequential, :parallel, :loop, :llm)
-    * `config` - A map of configuration options for the agent. Common options include:
-      * `:name` (atom or string) - A unique name for the agent.
-      * `:description` (string) - A description of the agent's capabilities (used by other agents).
-      * `:tools` (list) - A list of tool modules or functions the agent can use.
-      * `:instruction` (string) - Instructions guiding the agent's behavior.
-      * `:model` (string or atom) - The underlying LLM model identifier (for LLM agents).
-      * `:input_schema` (module) - Optional. An Elixir struct module defining the expected input structure. Input must be a JSON string conforming to this schema.
-      * `:output_schema` (module) - Optional. An Elixir struct module defining the desired output structure. The agent will attempt to generate a JSON string conforming to this schema. **Using this option disables tool usage for the agent.**
-      * `:output_key` (atom or string) - Optional. If set, the agent's final response content will be stored in the session state under this key.
-      * ... (other agent-type specific options)
+    * `config` - A map of configuration options for the agent.
 
   ## Examples
       iex> Adk.create_agent(:llm, %{name: "capital_agent", model: "gemini-flash", tools: [MyApp.Tools.GetCapital]})
       {:ok, agent_pid}
-
-      iex> defmodule CapitalInput do
-      ...>   @enforce_keys [:country]
-      ...>   defstruct [:country]
-      ...> end
-      iex> defmodule CapitalOutput do
-      ...>   @enforce_keys [:capital]
-      ...>   defstruct [:capital]
-      ...> end
-      iex> Adk.create_agent(:llm, %{
-      ...>   name: "structured_capital_agent",
-      ...>   model: "gemini-flash",
-      ...>   instruction: "Given a country in JSON like `{"country": "France"}`, respond ONLY with JSON like `{"capital": "Paris"}`.",
-      ...>   input_schema: CapitalInput,
-      ...>   output_schema: CapitalOutput,
-      ...>   output_key: :capital_result
-      ...> })
-      {:ok, agent_pid}
   """
   def create_agent(agent_type, config) do
-    Adk.AgentSupervisor.start_agent(agent_type, config)
+    Adk.Agent.AgentSupervisor.start_agent(agent_type, config)
   end
 
   @doc """
   Run an agent with the given input.
 
   ## Parameters
-    * `agent` - The agent pid or reference
+    * `agent` - The agent pid or struct reference
     * `input` - The input to provide to the agent
 
   ## Examples
@@ -65,7 +47,20 @@ defmodule Adk do
       {:ok, %{output: "The weather is sunny."}}
   """
   def run(agent, input) do
-    Adk.Agent.run(agent, input)
+    cond do
+      # Handle PID case (GenServer/server-based agent)
+      is_pid(agent) or is_atom(agent) or is_tuple(agent) ->
+        Adk.Agent.Server.run(agent, input)
+
+      # Handle struct case (direct call to implementation)
+      is_map(agent) and is_atom(Map.get(agent, :__struct__)) ->
+        Adk.Agent.run(agent, input)
+
+      # Handle any other invalid cases
+      true ->
+        {:error,
+         {:invalid_agent, "Agent must be a PID, registered name, or a valid agent struct"}}
+    end
   end
 
   @doc """
@@ -79,7 +74,6 @@ defmodule Adk do
       :ok
   """
   def register_tool(tool_module) do
-    # Register under the tool's definition name (as atom)
     name =
       case tool_module.definition() do
         %{name: name} when is_binary(name) -> String.to_atom(name)
@@ -103,20 +97,6 @@ defmodule Adk do
   end
 
   @doc """
-  Get an agent's current state.
-
-  ## Parameters
-    * `agent` - The agent pid or reference
-
-  ## Examples
-      iex> Adk.get_state(agent)
-      {:ok, %{name: "my_agent", memory: %{}, ...}}
-  """
-  def get_state(agent) do
-    Adk.Agent.get_state(agent)
-  end
-
-  @doc """
   Execute a specific tool with parameters.
 
   ## Parameters
@@ -128,8 +108,6 @@ defmodule Adk do
       {:ok, 5}
   """
   def execute_tool(tool_name, params) do
-    # Create a minimal context map. If session/invocation info is needed here,
-    # this function signature would need to change.
     context = %{session_id: "adk_facade_call", invocation_id: nil, tool_call_id: nil}
     Adk.ToolRegistry.execute_tool(tool_name, params, context)
   end
@@ -232,55 +210,5 @@ defmodule Adk do
   """
   def clear_memory(service, session_id) do
     Adk.Memory.clear_sessions(service, session_id)
-  end
-
-  # Agent-to-agent communication
-
-  @doc """
-  Call another agent within the same system.
-
-  ## Parameters
-    * `agent` - The agent to call (pid or name)
-    * `input` - The input to provide to the agent
-    * `metadata` - Optional metadata about the call
-
-  ## Examples
-      iex> Adk.call_agent(weather_agent, "What's the weather in New York?")
-      {:ok, %{output: "It's sunny in New York."}}
-  """
-  def call_agent(agent, input, metadata \\ %{}) do
-    Adk.A2A.call_local(agent, input, metadata)
-  end
-
-  @doc """
-  Call a remote agent via HTTP.
-
-  ## Parameters
-    * `url` - The URL of the remote agent's /run endpoint
-    * `input` - The input to provide to the agent
-    * `metadata` - Optional metadata to send with the request
-    * `options` - Additional HTTP request options
-
-  ## Examples
-      iex> Adk.call_remote_agent("https://weather-agent.example.com/run", "What's the weather in New York?")
-      {:ok, %{output: "It's sunny in New York.", metadata: %{agent_name: "weather"}}}
-  """
-  def call_remote_agent(url, input, metadata \\ %{}, options \\ []) do
-    Adk.A2A.call_remote(url, input, metadata, options)
-  end
-
-  @doc """
-  Make an agent available via HTTP.
-
-  ## Parameters
-    * `agent` - The agent to expose (pid or name)
-    * `path` - The path to make the agent available at
-
-  ## Examples
-      iex> Adk.expose_agent(weather_agent, "/agents/weather")
-      :ok
-  """
-  def expose_agent(agent, path \\ "/run") do
-    Adk.A2A.register_http(agent, path)
   end
 end

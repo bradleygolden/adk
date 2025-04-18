@@ -3,16 +3,29 @@ defmodule Adk.PromptTemplate do
   Provides utilities for working with prompt templates.
 
   This module allows creating, formatting, and composing prompts with support for
-  structured output requirements like JSON formatting.
+  structured output requirements like JSON formatting. It also supports rendering
+  EEx-style prompt templates with variables from maps or structs using LangChain.
   """
 
   @doc """
-  (DEPRECATED) Formats a prompt with variables using EEx templating.
+  Renders a prompt template string with the given map or struct as variables.
 
-  This is no longer necessary. Pass your template and variables directly to LangChain's prompt builder or chat API.
-  This function is now a passthrough and will be removed in a future version.
+  Uses LangChain's EEx-based prompt templating under the hood.
+
+  ## Examples
+      iex> Adk.PromptTemplate.render("Hello, <%= @name %>!", %{name: "World"})
+      "Hello, World!"
+
+      iex> defmodule User do
+      ...>   defstruct [:name]
+      ...> end
+      iex> Adk.PromptTemplate.render("Hi, <%= @name %>!", %User{name: "Alice"})
+      "Hi, Alice!"
   """
-  def format(template, _vars \\ %{}) when is_binary(template), do: template
+  @spec render(String.t(), map() | struct()) :: String.t()
+  def render(template, vars) when is_binary(template) and (is_map(vars) or is_struct(vars)) do
+    LangChain.PromptTemplate.format_text(template, vars)
+  end
 
   @doc """
   Creates a new prompt that requires JSON output format.
@@ -30,26 +43,48 @@ defmodule Adk.PromptTemplate do
       iex> Adk.PromptTemplate.with_json_output(base_prompt, MyApp.OutputSchema)
   """
   def with_json_output(base_prompt, schema, example \\ nil) when is_binary(base_prompt) do
-    # Treat all struct fields as required
     required_fields =
       schema.__struct__()
       |> Map.from_struct()
       |> Map.keys()
       |> Enum.map(&to_string/1)
 
-    # Build the JSON format description
+    # If the schema provides field descriptions, format them for the prompt
+    field_descriptions =
+      if function_exported?(schema, :field_descriptions, 0) do
+        schema.field_descriptions()
+      else
+        %{}
+      end
+
+    description_section =
+      if map_size(field_descriptions) > 0 do
+        descs =
+          Enum.map(required_fields, fn field ->
+            desc = Map.get(field_descriptions, String.to_atom(field)) || ""
+            "- `#{field}`: #{desc}"
+          end)
+          |> Enum.join("\n")
+
+        """
+        Field Descriptions:
+        #{descs}
+        """
+      else
+        ""
+      end
+
     json_format = """
 
     RESPONSE FORMAT:
     You MUST format your response as a valid JSON object with the following structure:
-    #{build_json_schema_example(schema, example)}
+    #{description_section}#{build_json_schema_example(schema, example)}
 
     Required fields: #{if Enum.empty?(required_fields), do: "none", else: Enum.join(required_fields, ", ")}
 
     IMPORTANT: Your ENTIRE response must be VALID JSON. Do not include ANY text before or after the JSON object.
     """
 
-    # Return the combined prompt
     base_prompt <> json_format
   end
 

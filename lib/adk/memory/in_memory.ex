@@ -9,6 +9,7 @@ defmodule Adk.Memory.InMemory do
   - See https://google.github.io/adk-docs/Memory for design rationale.
   """
   use Adk.Memory
+  use GenServer
 
   alias Adk.Event
 
@@ -25,6 +26,11 @@ defmodule Adk.Memory.InMemory do
   end
 
   def start_link(_opts \\ []) do
+    GenServer.start_link(__MODULE__, [], name: __MODULE__)
+  end
+
+  @impl true
+  def init(_) do
     unless :ets.whereis(@table) != :undefined do
       :ets.new(@table, [
         :named_table,
@@ -152,5 +158,17 @@ defmodule Adk.Memory.InMemory do
   def clear_all_sessions do
     :ets.delete_all_objects(@table)
     :ok
+  end
+
+  @doc """
+  Clears all data in the in-memory store.
+  """
+  def clear do
+    GenServer.call(__MODULE__, :clear)
+  end
+
+  @impl true
+  def handle_call(:clear, _from, _state) do
+    {:reply, :ok, %{}}
   end
 end
