@@ -40,11 +40,6 @@ IO.puts(result.output)
 - **Memory**: Persist session history and state via `Adk.Memory`
 - **Event System**: Track agent activities for debugging and auditing
 
-## Examples Gallery
-
-See the `examples/` directory for working examples, including:
-- Calculator Agent (examples/calculator_agent_example.livemd)
-
 ## Testing Agents
 
 Adk includes a built-in ExUnit harness to make agent tests concise, deterministic, and fast.
@@ -170,11 +165,12 @@ You can specify custom thresholds in a `test_config.json` file:
 
 ## Guides & API Reference
 
-- [Getting Started](docs/getting_started.md)
-- [Agent Types](docs/guides/agent_types.md)
-- [Tools](docs/guides/tools.md)
-- [Memory](docs/guides/memory.md)
-- [Overview](docs/guides/overview.md)
+- [Getting Started](documentation/getting_started.md)
+- [Agent Types](documentation/guides/agent_types.md)
+- [Tools](documentation/guides/tools.md)
+- [Memory](documentation/guides/memory.md)
+- [Overview](documentation/guides/overview.md)
+- [Telemetry](documentation/telemetry.md)
 - [API Reference](https://hexdocs.pm/adk)
 
 ## Architectural Design
