@@ -1,0 +1,129 @@
+[
+    {
+        "name": "basic_conversation",
+        "data": [
+            {
+                "query": "Hello",
+                "expected_tool_use": [],
+                "expected_intermediate_agent_responses": [],
+                "reference": "Hi there! How can I help you today?"
+            },
+            {
+                "query": "What can you do?",
+                "expected_tool_use": [],
+                "expected_intermediate_agent_responses": [],
+                "reference": "I can help with a variety of tasks including answering questions, looking up information, and performing calculations."
+            },
+            {
+                "query": "Goodbye",
+                "expected_tool_use": [],
+                "expected_intermediate_agent_responses": [],
+                "reference": "Goodbye! Feel free to come back if you have more questions."
+            }
+        ],
+        "initial_session": {
+            "id": "session_basic_conversation",
+            "app_name": "demo_agent",
+            "user_id": "test_user",
+            "state": {}
+        }
+    },
+    {
+        "name": "weather_queries",
+        "data": [
+            {
+                "query": "What's the weather like?",
+                "expected_tool_use": [],
+                "expected_intermediate_agent_responses": [],
+                "reference": "I'll need a location to check the weather. Could you please specify a city or region?"
+            },
+            {
+                "query": "Check the weather in New York",
+                "expected_tool_use": [
+                    {
+                        "tool_name": "weather_lookup",
+                        "tool_input": {
+                            "location": "New York"
+                        }
+                    }
+                ],
+                "expected_intermediate_agent_responses": [],
+                "reference": "The current weather in New York is sunny with a temperature of 22°C."
+            },
+            {
+                "query": "How about Tokyo?",
+                "expected_tool_use": [
+                    {
+                        "tool_name": "weather_lookup",
+                        "tool_input": {
+                            "location": "Tokyo"
+                        }
+                    }
+                ],
+                "expected_intermediate_agent_responses": [],
+                "reference": "The current weather in Tokyo is rainy with a temperature of 24°C."
+            }
+        ],
+        "initial_session": {
+            "id": "session_weather_queries",
+            "app_name": "demo_agent",
+            "user_id": "test_user",
+            "state": {
+                "last_query_type": "weather"
+            }
+        }
+    },
+    {
+        "name": "calculator_operations",
+        "data": [
+            {
+                "query": "I need to do some math",
+                "expected_tool_use": [],
+                "expected_intermediate_agent_responses": [],
+                "reference": "I can help with calculations. What would you like to calculate?"
+            },
+            {
+                "query": "What's 15 + 27?",
+                "expected_tool_use": [
+                    {
+                        "tool_name": "calculator",
+                        "tool_input": {
+                            "operation": "add",
+                            "operands": [
+                                15,
+                                27
+                            ]
+                        }
+                    }
+                ],
+                "expected_intermediate_agent_responses": [],
+                "reference": "15 + 27 = 42"
+            },
+            {
+                "query": "Multiply that by 3",
+                "expected_tool_use": [
+                    {
+                        "tool_name": "calculator",
+                        "tool_input": {
+                            "operation": "multiply",
+                            "operands": [
+                                42,
+                                3
+                            ]
+                        }
+                    }
+                ],
+                "expected_intermediate_agent_responses": [],
+                "reference": "42 * 3 = 126"
+            }
+        ],
+        "initial_session": {
+            "id": "session_calculator",
+            "app_name": "demo_agent",
+            "user_id": "test_user",
+            "state": {
+                "last_result": null
+            }
+        }
+    }
+]

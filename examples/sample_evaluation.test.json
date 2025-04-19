@@ -1,0 +1,44 @@
+[
+    {
+        "query": "Hi there",
+        "expected_tool_use": [],
+        "expected_intermediate_agent_responses": [],
+        "reference": "Hello! How can I help you today?"
+    },
+    {
+        "query": "What's your name?",
+        "expected_tool_use": [],
+        "expected_intermediate_agent_responses": [],
+        "reference": "I'm an AI assistant built with the Adk framework. You can call me Adk Assistant."
+    },
+    {
+        "query": "Tell me the current weather in London",
+        "expected_tool_use": [
+            {
+                "tool_name": "weather_lookup",
+                "tool_input": {
+                    "location": "London"
+                }
+            }
+        ],
+        "expected_intermediate_agent_responses": [],
+        "reference": "The current weather in London is partly cloudy with a temperature of 18°C."
+    },
+    {
+        "query": "What's 25 * 16?",
+        "expected_tool_use": [
+            {
+                "tool_name": "calculator",
+                "tool_input": {
+                    "operation": "multiply",
+                    "operands": [
+                        25,
+                        16
+                    ]
+                }
+            }
+        ],
+        "expected_intermediate_agent_responses": [],
+        "reference": "25 * 16 = 400"
+    }
+]

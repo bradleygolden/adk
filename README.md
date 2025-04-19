@@ -97,6 +97,77 @@ test "llm agent with stubbed response" do
 end
 ```
 
+## Evaluating Agents
+
+Adk includes a programmatic evaluation system inspired by the Google Agent Development Kit's evaluation workflow. This allows for data-driven, automated testing of agent behaviors using JSON evaluation files.
+
+### JSON-Based Evaluation
+
+You can define test scenarios in JSON format:
+- `.test.json` - For individual test cases
+- `.evalset.json` - For multiple evaluation sessions
+
+Example test file (`examples/sample_evaluation.test.json`):
+```json
+[
+  {
+    "query": "Hi there",
+    "expected_tool_use": [],
+    "expected_intermediate_agent_responses": [],
+    "reference": "Hello! How can I help you today?"
+  },
+  {
+    "query": "What's 25 * 16?",
+    "expected_tool_use": [
+      {
+        "tool_name": "calculator",
+        "tool_input": {
+          "operation": "multiply",
+          "operands": [25, 16]
+        }
+      }
+    ],
+    "expected_intermediate_agent_responses": [],
+    "reference": "25 * 16 = 400"
+  }
+]
+```
+
+### Using the Evaluator in ExUnit
+
+The evaluator can be integrated with ExUnit tests for automated evaluation:
+
+```elixir
+defmodule MyAgentEvaluationTest do
+  use ExUnit.Case, async: true
+  
+  test "agent passes all evaluation scenarios" do
+    results = Adk.Evaluator.evaluate(
+      MyAgent,
+      "test/fixtures/my_agent_eval.test.json"
+    )
+    
+    assert results.all_passed?
+  end
+end
+```
+
+### Evaluation Metrics
+
+The evaluator computes two key metrics:
+- `tool_trajectory_avg_score`: How accurately the agent used the expected tools
+- `response_match_score`: How closely the agent's final response matches the reference
+
+You can specify custom thresholds in a `test_config.json` file:
+```json
+{
+  "criteria": {
+    "tool_trajectory_avg_score": 1.0,
+    "response_match_score": 0.8
+  }
+}
+```
+
 ## Guides & API Reference
 
 - [Getting Started](docs/getting_started.md)
