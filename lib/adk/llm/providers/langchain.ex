@@ -229,80 +229,20 @@ defmodule Adk.LLM.Providers.Langchain do
   Checks if the LangChain library is available and loaded. Returns :ok or {:error, reason}.
   """
   def ensure_langchain_available do
-    # Multi-step approach to reliably detect if LangChain is available
-
-    # Step 1: Check if LangChain is available in the application environment
-    langchain_app =
-      try do
-        Application.get_application(LangChain)
-      rescue
-        _ -> nil
-      end
-
-    # Step 2: If LangChain app is detected, make sure the module actually exists
-    if is_atom(langchain_app) do
-      if Code.ensure_loaded?(LangChain) do
-        # Everything is good - LangChain is available and loaded
-        :ok
-      else
-        # Strange state - app is loaded but module isn't
-        try_load_langchain()
-      end
+    # First check if langchain is already available
+    if Code.ensure_loaded?(LangChain) do
+      :ok
     else
-      # Step 3: App not available, so try alternatives
-      try_load_langchain()
-    end
-  end
-
-  # Private helper to try multiple approaches to load LangChain
-  defp try_load_langchain do
-    try do
-      # Check if the module is available but not loaded
-      if Code.ensure_loaded?(LangChain) do
-        # Module loaded successfully
+      # Try to dynamically compile LangChain if it's in the path
+      try do
+        {:module, _} = Code.ensure_compiled(LangChain)
         :ok
-      else
-        # Try to find LangChain in the load path
-        path = :code.which(LangChain)
-
-        case path do
-          # LangChain is available in path
-          path when is_list(path) ->
-            # Try to dynamically load it
-            try do
-              {:module, _} = Code.ensure_compiled(LangChain)
-              :ok
-            rescue
-              _ ->
-                {:error,
-                 "LangChain is in the path but could not be compiled. Version may be incompatible."}
-            end
-
-          # Try looking for LangChain.Message as an alternative indicator
-          :non_existing ->
-            # Check for LangChain.Message which is a key component
-            if Code.ensure_loaded?(LangChain.Message) do
-              :ok
-            else
-              path = :code.which(LangChain.Message)
-
-              case path do
-                path when is_list(path) ->
-                  :ok
-
-                :non_existing ->
-                  {:error, "LangChain library is not available. Add it to your dependencies."}
-              end
-            end
-        end
+      rescue
+        _ ->
+          {:error,
+           {:langchain_not_available,
+            "LangChain library is not available. Add {:langchain, \"~> 0.3.2\"} to your dependencies."}}
       end
-    rescue
-      e ->
-        # Capture the specific error for debugging
-        error_msg = Exception.message(e)
-
-        {:error,
-         "Error loading LangChain: #{error_msg}. Make sure the dependency is properly configured."}
     end
   end
 

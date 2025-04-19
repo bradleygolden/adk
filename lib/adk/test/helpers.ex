@@ -6,7 +6,6 @@ defmodule Adk.Test.Helpers do
   and asserting on agent outputs.
   """
   import ExUnit.Assertions
-  # import Mox
 
   @doc """
   Assert that running an agent with `input` yields `expected` output.
@@ -27,30 +26,60 @@ defmodule Adk.Test.Helpers do
     assert result.output == expected
   end
 
-  @doc """
-  Stub any LLM call to return the specified `response`.
+  # Define a macro to conditionally include Mox-dependent code
+  @mox_available Code.ensure_loaded?(Mox) == true
 
-  This is useful for deterministic testing of agents that use LLMs.
+  if @mox_available do
+    @doc """
+    Stub any LLM call to return the specified `response`.
 
-  ## Examples
+    This is useful for deterministic testing of agents that use LLMs.
 
-      test "my llm agent" do
-        stub_llm("This is a test response")
+    ## Examples
 
-        {:ok, agent} = Adk.create_agent(:llm, %{
-          name: "test_agent",
-          prompt: "Hello"
-        })
+        test "my llm agent" do
+          stub_llm("This is a test response")
 
-        assert_agent_output(agent, nil, "This is a test response")
-      end
-  """
-  def stub_llm(response) do
-    Mox.defmock(LLMMock, for: Adk.LLM.Provider)
-    Adk.Config.set(:llm_provider, LLMMock)
+          {:ok, agent} = Adk.create_agent(:llm, %{
+            name: "test_agent",
+            prompt: "Hello"
+          })
 
-    LLMMock
-    |> Mox.expect(:generate, fn _prompt -> {:ok, response} end)
+          assert_agent_output(agent, nil, "This is a test response")
+        end
+    """
+    def stub_llm(response) do
+      Mox.defmock(LLMMock, for: Adk.LLM.Provider)
+      Adk.Config.set(:llm_provider, LLMMock)
+
+      LLMMock
+      |> Mox.expect(:generate, fn _prompt -> {:ok, response} end)
+    end
+  else
+    @doc """
+    Stub any LLM call to return the specified `response`.
+
+    NOTE: This function requires the Mox library to be added to your dependencies:
+    ```
+    {:mox, "~> 1.0", only: :test}
+    ```
+
+    ## Examples
+
+        test "my llm agent" do
+          stub_llm("This is a test response")
+
+          {:ok, agent} = Adk.create_agent(:llm, %{
+            name: "test_agent",
+            prompt: "Hello"
+          })
+
+          assert_agent_output(agent, nil, "This is a test response")
+        end
+    """
+    def stub_llm(_response) do
+      raise "Mox is required for stub_llm/1. Add {:mox, \"~> 1.0\", only: :test} to your dependencies."
+    end
   end
 
   @doc """
